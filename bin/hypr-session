@@ -55,6 +55,20 @@ terminal_cwd() {
   [[ -n $child ]] && readlink "/proc/$child/cwd"
 }
 
+# Environment variables process $1 was started with that the session itself
+# does not have, as a JSON object. Apps started through a wrapper script
+# (Dolphin with a custom Qt style, for example) need them to come back the
+# same. Variables that change on every login are left out.
+app_env() {
+  local session
+  # What any app launched by Hyprland gets: the watcher is one such process
+  session=$(pgrep -o -f '^/bin/bash .*hypr-session watch$')
+  [[ -r /proc/$1/environ && -n $session ]] || { echo '{}'; return; }
+  comm -13 <(tr '\0' '\n' <"/proc/$session/environ" | sort) <(tr '\0' '\n' <"/proc/$1/environ" | sort) |
+    grep -v -E '^(_|PWD|OLDPWD|SHLVL|INVOCATION_ID|JOURNAL_STREAM|SYSTEMD_EXEC_PID|MANAGERPID|MANAGERPIDFDID|DESKTOP_STARTUP_ID|XDG_ACTIVATION_TOKEN|HYPRLAND_INSTANCE_SIGNATURE|HYPRLAND_CMD|DBUS_SESSION_BUS_ADDRESS|XDG_SESSION_ID|XDG_VTNR|HL_EXEC_RULE_TOKEN|GIO_LAUNCHED_DESKTOP_FILE|GIO_LAUNCHED_DESKTOP_FILE_PID|CHROME_DESKTOP|CHROME_WRAPPER|ELECTRON_[A-Z_]*|VSCODE_[A-Z_]*|NODE_OPTIONS)=' |
+    jq -Rn '[inputs | select(contains("=")) | capture("^(?<k>[^=]+)=(?<v>.*)$")] | map({(.k): .v}) | add // {}'
+}
+
 # Seconds since the epoch when process $1 started
 proc_start() {
   local ticks boot
@@ -105,7 +119,7 @@ terminal_program() {
 }
 
 save() {
-  local clients entries="[]" pid cmd class windows workspaces geometry cwd program flag
+  local clients entries="[]" pid cmd class windows workspaces geometry cwd program flag appenv
   shutting_down && return
   clients=$(hyprctl clients -j) || return
   [[ $(jq length <<<"$clients") -eq 0 ]] && return # never overwrite with an empty desktop
@@ -129,6 +143,8 @@ save() {
     # Drop --app= so a browser first opened as a web app comes back as a browser.
     cmd=$(jq -Rsc 'split("\u0000") | map(select(. != "")) | if length == 1 then .[0] | split(" ") | map(select(. != "")) else . end | map(select(startswith("--app=") | not))' <"/proc/$pid/cmdline")
     [[ $cmd == "[]" ]] && continue
+
+    appenv=$(app_env "$pid")
 
     # Browsers reopen the tabs of the last session
     case $class in
@@ -158,7 +174,10 @@ save() {
         ;;
     esac
 
-    entries=$(jq -c --argjson c "$cmd" --arg k "$class" --argjson w "$workspaces" --argjson g "$geometry" '. + [{cmd: $c, class: $k, workspaces: $w, geometry: $g}]' <<<"$entries")
+    # Terminals start a fresh shell and program, their env is not carried over
+    case $class in foot | Alacritty | com.mitchellh.ghostty | kitty) appenv='{}' ;; esac
+    entries=$(jq -c --argjson c "$cmd" --arg k "$class" --argjson w "$workspaces" --argjson g "$geometry" --argjson e "$appenv" \
+      '. + [{cmd: $c, class: $k, workspaces: $w, geometry: $g} + (if $e == {} then {} else {env: $e} end)]' <<<"$entries")
   done < <(jq -r '[.[] | select(.pid > 0)] | sort_by(.workspace.id, .at[0], .at[1]) | .[] | "\(.pid)\t\(.class)"' <<<"$clients" | awk '!seen[$0]++')
 
   mkdir -p "$(dirname "$STATE")"
@@ -263,7 +282,7 @@ restore() {
     if ! hyprctl clients -j | jq -e --argjson known "$known" --arg k "$class" \
       'any(.[]; .class == $k and (.address | IN($known[]) | not))' >/dev/null; then
       # Launch straight onto the saved workspace so windows never flash on the current one
-      cmd=$(jq -r '.cmd | map(@sh) | join(" ")' <<<"$entry")
+      cmd=$(jq -r '((.env // {}) | to_entries | if length > 0 then ["env"] + map("\(.key)=\(.value)") else [] end) + .cmd | map(@sh) | join(" ")' <<<"$entry")
       hyprctl dispatch "hl.dsp.exec_cmd([==[$cmd]==], { workspace = \"${workspaces[0]} silent\" })" >/dev/null
     fi
 
