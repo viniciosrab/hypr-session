@@ -38,26 +38,42 @@ ShellRoot {
   property int waited: 0
   property bool ran: false
 
+  function names() { return harness.panel.apps.map(function(a) { return a.name }) }
+
   readonly property var steps: [
     { name: "widget finds the service and its tooltip tells the last save",
-      until: function() { return harness.widget.service === harness.service && harness.service.lastSaveAt > 0 && harness.service.lastSaveApps === 1 } },
-    { name: "clicking the icon opens the panel with the four switches",
+      until: function() {
+        if (harness.widget.children[1].text !== "\u{F0031}") return false
+        return harness.widget.service === harness.service && harness.service.lastSaveAt > 0
+          && harness.widget.children[1].tooltipText === "Sessão salva agora · 1 app"
+      } },
+    { name: "clicking the icon opens the panel: saved status, three restore switches, apps collapsed",
       run: function() { harness.widget.toggle() },
       until: function() {
         var p = harness.panel
-        return p && p.opened && p.service === harness.service && p.options.length === 4 && p.settingsNow.restoreOnStart === true
+        return p && p.opened && p.heroTitle === "Sessão salva" && p.heroMeta === "agora · 1 app"
+          && p.options.length === 3 && p.appsExpanded === false && p.restoreLine === ""
       } },
-    { name: "the panel lists the open apps",
-      until: function() { return harness.panel.appList.indexOf("fakeapp") !== -1 } },
-    { name: "switches follow the service settings, and ignored apps stay listed after they close",
-      run: function() { harness.service.setSetting("rearrangeLayout", false); harness.service.setIgnored("gone", true) },
+    { name: "apps show the program name when no launcher knows the class, all saved",
+      until: function() { return harness.names().indexOf("sleep") !== -1 && harness.panel.savedCount === harness.panel.apps.length } },
+    { name: "switching an app off leaves it out, and it stays listed after it closes",
+      run: function() { harness.service.setIgnored("gone", true) },
       until: function() {
         var p = harness.panel
-        return p.settingsNow.rearrangeLayout === false && p.appList.indexOf("gone") !== -1
+        return p.apps.some(function(a) { return a.class === "gone" }) && p.savedCount === p.apps.length - 1
       } },
-    { name: "the icon is dimmed while autosave is off",
+    { name: "an incomplete restore keeps the anchor and turns the panel line into a warning",
+      run: function() { harness.service.lastRestore = { placed: 1, expected: 2, off: 0, layout: true } },
+      until: function() {
+        var b = harness.widget.children[1]
+        return b.text === "\u{F0031}" && harness.panel.restoreOk === false
+      } },
+    { name: "pausing autosave changes the headline and dims the bar icon",
       run: function() { harness.service.setSetting("autoSave", false) },
-      until: function() { return harness.widget.children[1].dimmed === true } }
+      until: function() {
+        return harness.panel.heroTitle === "Salvamento pausado" && harness.widget.children[1].dimmed === true
+          && harness.widget.children[1].tooltipText === ""
+      } }
   ]
 
   Process {
@@ -92,7 +108,7 @@ ShellRoot {
       var ok = false
       try { ok = step.until() } catch (e) { console.log("step threw: " + e) }
       if (ok) { stop(); console.log("ok  - " + step.name); harness.advance(); return }
-      if (harness.waited > 12000) { stop(); harness.finish("timed out: " + step.name) }
+      if (harness.waited > 12000) { stop(); harness.finish("timed out: " + step.name + (harness.panel ? " [" + harness.panel.heroTitle + " / " + harness.panel.heroMeta + " / " + harness.panel.restoreLine + " / " + harness.panel.opened + "]" : "")) }
     }
   }
 

@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 
 // Icon in the bar. Click opens the panel; the tooltip says when the session
 // was last saved.
@@ -46,12 +47,17 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "󰆓"
+    text: root.service ? Model.sessionIcon({ restoring: root.service.restoring, lastRestore: root.service.lastRestore }) : Model.sessionIcon({ restoring: false, lastRestore: null })
     dimmed: root.service ? !root.service.settings.autoSave : false
-    tooltipText: root.opened || !root.service ? ""
-      : (root.service.lastSaveAt > 0
-        ? "Salvo às " + Qt.formatTime(new Date(root.service.lastSaveAt), "HH:mm") + " · " + root.service.lastSaveApps + " apps"
-        : "Sessão ainda não salva")
+    tooltipText: {
+      if (root.opened || !root.service) return ""
+      if (root.service.restoring) return "Restaurando a sessão…"
+      if (Model.restoreProblem(root.service.lastRestore)) return "Restauração incompleta: " + Model.restoreSummary(root.service.lastRestore)
+      if (!root.service.settings.autoSave) return "Salvamento pausado"
+      return root.service.lastSaveAt > 0
+        ? "Sessão salva " + Model.relativeTime(root.service.lastSaveAt, Date.now()) + " · " + root.service.lastSaveApps + (root.service.lastSaveApps === 1 ? " app" : " apps")
+        : "Sessão ainda não salva"
+    }
 
     onPressed: function(b) { root.toggle() }
   }

@@ -41,9 +41,13 @@ Item {
   property int lastSaveApps: 0
   property real lastRestoreAt: 0
   property string lastRestoreText: ""
+  property var lastRestore: null
   property bool restoring: false
   property bool watching: false
   property var openClasses: []
+  // Open apps (and ignored ones) as { class, name } with readable names.
+  property var apps: []
+  property var appNames: ({})
 
   property string stateText: ""
   property bool stateKnown: false
@@ -167,7 +171,10 @@ Item {
     return true
   }
 
-  function setIgnored(cls, ignored) { persistSettings(Model.withIgnored(settings, cls, ignored)) }
+  function setIgnored(cls, ignored) {
+    persistSettings(Model.withIgnored(settings, cls, ignored))
+    updateApps(null)
+  }
 
   function persistSettings(next) {
     settings = next
@@ -279,8 +286,37 @@ Item {
   }
 
   function rememberOpen(clients) {
-    root.openClasses = Model.targets(clients, null).map(function(t) { return t.class })
-      .filter(function(c, i, all) { return all.indexOf(c) === i }).sort()
+    var exe = {}
+    Model.targets(clients, null).forEach(function(t) {
+      if (!(t.class in exe)) exe[t.class] = Model.parseCmdline(readFile("/proc/" + t.pid + "/cmdline"))[0] || ""
+    })
+    root.openClasses = Object.keys(exe).sort()
+    updateApps(exe)
+  }
+
+  property var lastExe: ({})
+
+  // The panel's app list: open apps plus ignored ones (so a closed app can
+  // be brought back), with names from the installed launchers.
+  function updateApps(exe) {
+    if (exe) lastExe = exe
+    var classes = Object.keys(lastExe)
+    settings.ignored.forEach(function(c) { if (classes.indexOf(c) === -1) classes.push(c) })
+    var names = appNames
+    root.apps = classes.map(function(c) { return { class: c, name: Model.appName(c, names, lastExe[c] || "") } })
+      .sort(function(a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1 })
+  }
+
+  // Name and StartupWMClass of every launcher, the user's own first.
+  function loadAppNames() {
+    var script = 'for f in "$HOME"/.local/share/applications/*.desktop "$HOME"/.local/share/flatpak/exports/share/applications/*.desktop '
+      + '/var/lib/flatpak/exports/share/applications/*.desktop /usr/share/applications/*.desktop; do [ -f "$f" ] && printf "%s\\n" "$f"; done '
+      + '| xargs -d "\\n" -r awk \'FNR==1{if(f)print f"\\t"n"\\t"w;f=FILENAME;n="";w="";s=""}/^\\[/{s=$0}'
+      + 's=="[Desktop Entry]"&&/^Name=/&&n==""{n=substr($0,6)}s=="[Desktop Entry]"&&/^StartupWMClass=/{w=substr($0,16)}END{if(f)print f"\\t"n"\\t"w}\''
+    return run(["sh", "-c", script]).then(function(r) {
+      root.appNames = Model.appNames(Model.parseDesktopIndex(r.out))
+      updateApps(null)
+    })
   }
 
   function launcherUrls(ctx) {
@@ -344,7 +380,8 @@ Item {
   function writeState(entries) {
     var text = Model.serializeEntries(entries)
     root.lastSaveAt = Date.now()
-    root.lastSaveApps = entries.length
+    // Apps, not processes: three terminals are one app
+    root.lastSaveApps = entries.map(function(e) { return e.class }).filter(function(c, i, all) { return all.indexOf(c) === i }).length
     if (text === stateText) return Promise.resolve()
     return run(["mkdir", "-p", stateDir]).then(function() {
       stateWriter.setText(text)
@@ -449,8 +486,8 @@ Item {
       }).then(function() {
         return settings.rearrangeLayout ? arrange(r.placements) : []
       }).then(function(off) {
-        root.lastRestoreText = r.placements.length + "/" + r.expected + " janelas"
-          + (settings.rearrangeLayout ? (off.length ? ", layout com " + off.length + " fora" : ", layout ok") : "")
+        root.lastRestore = { placed: r.placements.length, expected: r.expected, off: off.length, layout: settings.rearrangeLayout }
+        root.lastRestoreText = Model.restoreSummary(root.lastRestore)
       }).then(rulesOff, function(e) {
         return rulesOff().then(function() { throw e })
       }).then(function() { root.lastRestoreAt = Date.now() })
@@ -670,6 +707,7 @@ Item {
   // reload must never relaunch the apps.
   function start() {
     sessionEnv = readFile("/proc/" + Quickshell.processId + "/environ")
+    loadAppNames()
     return run(["cat", statePath]).then(function(cat) {
       if (cat.code === 0) { stateText = cat.out; stateKnown = true }
       return run(["sh", "-c", '[ -e "$1" ] && echo no || { : >"$1"; echo yes; }', "_", markerPath])
@@ -694,9 +732,7 @@ Item {
   // Classes of the windows open now, for the "ignore an app" list.
   function refreshOpen() {
     return hyprJson(["clients", "-j"]).then(function(clients) {
-      if (!clients) return
-      root.openClasses = Model.targets(clients, null).map(function(t) { return t.class })
-        .filter(function(c, i, all) { return all.indexOf(c) === i }).sort()
+      if (clients) rememberOpen(clients)
     })
   }
 

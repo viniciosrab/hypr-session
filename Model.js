@@ -402,6 +402,66 @@ function eventDelay(rawEvent) {
   return null
 }
 
+// ---- Panel text -----------------------------------------------------------------
+
+// Lines of "<path>\t<Name>\t<StartupWMClass>" (see Service.qml) into entries.
+function parseDesktopIndex(text) {
+  return String(text).split("\n").map(function(line) { return line.split("\t") })
+    .filter(function(f) { return f.length === 3 })
+    .map(function(f) {
+      return { base: f[0].replace(/^.*\//, "").replace(/\.desktop$/, ""), name: f[1], wmClass: f[2] }
+    })
+}
+
+// Lowercased window class or desktop file name -> display name. Entries come
+// in priority order (the user's own launchers first), the first one wins.
+function appNames(entries) {
+  var names = {}
+  entries.forEach(function(e) {
+    if (!e.name) return
+    ;[e.wmClass, e.base].forEach(function(key) {
+      if (key && !(key.toLowerCase() in names)) names[key.toLowerCase()] = e.name
+    })
+  })
+  return names
+}
+
+function appName(cls, names, exe) {
+  var known = names[String(cls).toLowerCase()]
+  if (known) return known
+  if (exe) return String(exe).replace(/^.*\//, "")
+  var parts = String(cls).split(".")
+  return parts[parts.length - 1] || String(cls)
+}
+
+function relativeTime(ms, now) {
+  if (!ms) return ""
+  var seconds = Math.max(0, (now - ms) / 1000)
+  if (seconds < 60) return "agora"
+  if (seconds < 3600) return "há " + Math.floor(seconds / 60) + " min"
+  if (seconds < 86400) return "há " + Math.floor(seconds / 3600) + " h"
+  function pad(n) { return (n < 10 ? "0" : "") + n }
+  var d = new Date(ms)
+  return "em " + pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + " às " + pad(d.getHours()) + ":" + pad(d.getMinutes())
+}
+
+// `r`: { placed, expected, off, layout } from the last restore.
+function restoreSummary(r) {
+  if (!r.expected) return "nada a reabrir"
+  if (r.placed < r.expected) return r.placed + " de " + r.expected + " janelas voltaram"
+  if (r.off > 0) return r.off + (r.off === 1 ? " janela fora do lugar" : " janelas fora do lugar")
+  return r.layout ? "tudo no lugar" : r.placed + " janelas reabertas"
+}
+
+// The glyph for the bar and the panel: an anchor, the session stays where
+// you left it. One shape in every state, so it always sits at the same size
+// as the stock bar icons; the state shows in its opacity and the tooltip.
+var ICON_SESSION = "\uDB80\uDC31" // nf-md anchor, U+F0031
+
+function restoreProblem(r) { return !!r && r.expected > 0 && (r.placed < r.expected || r.off > 0) }
+
+function sessionIcon(state) { return ICON_SESSION }
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     TERMINALS: TERMINALS, BROWSERS: BROWSERS, RULES_OFF_LUA: RULES_OFF_LUA,
@@ -412,6 +472,8 @@ if (typeof module !== "undefined" && module.exports) {
     targets: targets, windowsOf: windowsOf, buildEntry: buildEntry, serializeEntries: serializeEntries, summary: summary,
     restorable: restorable, alreadyOpen: alreadyOpen, launchCommand: launchCommand, ruleSpecs: ruleSpecs, rulesLua: rulesLua, launchLua: launchLua,
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
+    parseDesktopIndex: parseDesktopIndex, appNames: appNames, appName: appName,
+    relativeTime: relativeTime, sessionIcon: sessionIcon, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
     shuttingDown: shuttingDown, trimLog: trimLog, logLine: logLine, eventDelay: eventDelay
   }
 }

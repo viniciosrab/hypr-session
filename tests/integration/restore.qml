@@ -50,7 +50,7 @@ ShellRoot {
       until: function() { return harness.called("float({ action = \"enable\"") && harness.called("resize({ x = 300, y = 200") && harness.called("move({ x = 50, y = 60") } },
     { name: "keeps a copy of what was restored and reports it",
       until: function() {
-        return JSON.parse(harness.restoredText || "[]").length === 3 && harness.service.lastRestoreText === "2/2 janelas, layout ok"
+        return JSON.parse(harness.restoredText || "[]").length === 3 && harness.service.lastRestoreText === "tudo no lugar"
           && harness.service.restoring === false && harness.service.watching === true
       } },
     { name: "restoring again over the open apps launches nothing",

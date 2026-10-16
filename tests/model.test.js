@@ -210,3 +210,50 @@ test("restoring over a live desktop skips apps whose windows are already open", 
   assert.deepEqual(M.alreadyOpen(entries, open), [true, false, true, false])
   assert.deepEqual(M.alreadyOpen(entries, []), [false, false, false, false], "an empty desktop restores everything")
 })
+
+test("app names come from desktop entries, by window class or file name, user entries first", () => {
+  const names = M.appNames([
+    { base: "audiorelay", name: "AudioRelay", wmClass: "com-azefsw-audioconnect-desktop-app-MainKt" },
+    { base: "com.microsoft.VSCode", name: "Visual Studio Code", wmClass: "Code" },
+    { base: "foot", name: "Foot (mine)", wmClass: "" },
+    { base: "foot", name: "Foot", wmClass: "" }
+  ])
+  assert.equal(M.appName("com-azefsw-audioconnect-desktop-app-MainKt", names, ""), "AudioRelay")
+  assert.equal(M.appName("com.microsoft.VSCode", names, ""), "Visual Studio Code")
+  assert.equal(M.appName("code", names, ""), "Visual Studio Code", "class match ignores case")
+  assert.equal(M.appName("foot", names, ""), "Foot (mine)", "the first entry wins")
+  assert.equal(M.appName("some-tool", names, "/opt/x/bin/SomeTool"), "SomeTool", "falls back to the program name")
+  assert.equal(M.appName("org.example.Thing", names, ""), "Thing", "then to the last part of the class")
+})
+
+test("desktop index lines parse into entries", () => {
+  assert.deepEqual(M.parseDesktopIndex("/a/b/foot.desktop\tFoot\t\n/x/y.desktop\t\tY\nbad\n"),
+    [{ base: "foot", name: "Foot", wmClass: "" }, { base: "y", name: "", wmClass: "Y" }])
+})
+
+test("relative time reads naturally", () => {
+  const now = new Date(2026, 0, 2, 12, 0, 0).getTime()
+  assert.equal(M.relativeTime(now - 20 * 1000, now), "agora")
+  assert.equal(M.relativeTime(now - 60 * 1000, now), "há 1 min")
+  assert.equal(M.relativeTime(now - 59 * 60 * 1000, now), "há 59 min")
+  assert.equal(M.relativeTime(now - 3 * 3600 * 1000, now), "há 3 h")
+  assert.equal(M.relativeTime(now - 30 * 3600 * 1000, now), "em 01/01 às 06:00")
+  assert.equal(M.relativeTime(0, now), "")
+})
+
+test("restore result in one short phrase", () => {
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 0, layout: true }), "tudo no lugar")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 0, layout: false }), "4 janelas reabertas")
+  assert.equal(M.restoreSummary({ placed: 3, expected: 4, off: 0, layout: true }), "3 de 4 janelas voltaram")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 1, layout: true }), "1 janela fora do lugar")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 2, layout: true }), "2 janelas fora do lugar")
+  assert.equal(M.restoreSummary({ placed: 0, expected: 0, off: 0, layout: true }), "nada a reabrir")
+})
+
+test("the bar icon is the anchor in every state", () => {
+  for (const state of [{}, { restoring: true }, { lastRestore: { placed: 1, expected: 2, off: 0, layout: true } }])
+    assert.equal(M.sessionIcon(state), "\u{F0031}")
+  assert.equal(M.restoreProblem({ placed: 1, expected: 2, off: 0 }), true)
+  assert.equal(M.restoreProblem({ placed: 2, expected: 2, off: 0 }), false)
+  assert.equal(M.restoreProblem(null), false)
+})
