@@ -1,3 +1,0 @@
-#!/bin/bash
-# Reopen last session's apps on their workspaces, then keep saving the session.
-setsid -f bash -c '$HOME/.local/bin/hypr-session restore; exec $HOME/.local/bin/hypr-session watch' >/dev/null 2>&1 </dev/null
