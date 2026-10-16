@@ -1,96 +1,58 @@
 # hypr-session
 
-Plugin nativo do Omarchy que salva e restaura a sessão do Hyprland entre reboots, sem mostrar nada na tela durante a restauração.
+Plugin do Omarchy que salva sua sessão do Hyprland e a restaura depois de um reboot, sem nada piscar na tela.
 
 ## O que volta
 
-- **Apps nos workspaces certos**, incluindo workspaces especiais como o scratchpad (`Super+S`).
-- **Layout exato do dwindle**: posição, tamanho e divisões de cada janela, além das janelas flutuantes. O layout é remontado nos workspaces escondidos sem focar nenhuma janela nem trocar de workspace.
-- **Terminais com o programa que estava rodando**, na mesma pasta:
-  - Claude Code: `claude --resume <sessão>`, a mesma conversa.
-  - Codex: `codex resume <sessão>`.
-  - pi: `pi --session <sessão>`.
-  - herdr, nvim, vim, btop, htop, lazygit, lazydocker e yazi abrem de novo.
-- **Chrome com as abas da última sessão** (`--restore-last-session`).
-- **Web apps** (`omarchy-launch-webapp`) como web apps, cada um no seu workspace.
+- Cada app no seu workspace, incluindo os especiais (como o scratchpad).
+- O layout exato: tamanho e divisão de cada janela, e as janelas flutuantes.
+- Terminais na mesma pasta, rodando o que rodavam: Claude Code, Codex e pi voltam na mesma conversa. Também reabrem herdr, nvim, vim, btop, htop, lazygit, lazydocker e yazi.
+- Chrome com as abas da última sessão, e web apps como web apps.
 
 ## Instalação
 
 ```sh
 omarchy plugin add https://github.com/viniciosrab/hypr-session.git --enable
+omarchy bar put vinicios.hypr-session --section right   # ícone na barra (opcional)
 ```
 
-Funciona sem configurar nada: o plugin salva a sessão e a restaura sozinho no próximo boot. Os apps abertos hoje só precisam estar abertos quando o plugin for ativado.
+Pronto. A partir daí a sessão é salva sozinha e volta no próximo boot.
 
-Dependências: `hyprland` (0.56+, configuração em Lua), `sqlite3` (só para retomar o Codex).
-
-Para ver o ícone na barra: `omarchy bar put vinicios.hypr-session --section right`.
+Precisa do Hyprland 0.56 ou mais novo. O `sqlite3` só é necessário para retomar o Codex.
 
 ## Painel
 
-O ícone da barra mostra a hora do último save. Clicar abre o painel:
+Clique no ícone da barra para ver quando a sessão foi salva e restaurada pela última vez, e para salvar ou restaurar na hora.
 
-- **Último save** e **última restauração**, com o resultado (janelas encontradas e se o layout bateu).
-- **Salvar agora** e **Restaurar agora**.
-- Quatro opções, todas ligadas por padrão:
-
-| Opção | Desligada |
+| Opção (todas ligadas por padrão) | Ao desligar |
 |---|---|
-| Restaurar ao iniciar | Nada é reaberto no boot. O save continua. |
-| Salvar automaticamente | A sessão salva não é mais atualizada. |
-| Remontar layout | Os apps voltam nos workspaces certos, sem remontar o dwindle. |
-| Retomar agentes nos terminais | Claude, Codex e pi voltam na pasta certa, mas sem reabrir a conversa. |
+| Restaurar ao iniciar | Nada reabre no boot. A sessão continua sendo salva. |
+| Salvar automaticamente | A sessão salva fica congelada como está. |
+| Remontar layout | Os apps voltam no workspace certo, mas sem refazer o layout. |
+| Retomar agentes nos terminais | Claude, Codex e pi voltam na pasta, sem reabrir a conversa. |
 
-- **Não salvar estes apps**: lista dos apps abertos. Os marcados não são salvos nem restaurados (por exemplo, um app que o seu `autostart.lua` já abre).
+Em **Não salvar estes apps**, marque o que não deve ser salvo nem reaberto.
 
-As opções ficam em `~/.local/state/omarchy/settings/hypr-session.json`, então valem mesmo sem o ícone na barra.
-
-## IPC
+## Pelo terminal
 
 ```sh
-omarchy-shell hypr-session save
-omarchy-shell hypr-session restore
-omarchy-shell hypr-session status                       # JSON
-omarchy-shell hypr-session set autoSave false           # restoreOnStart | autoSave | rearrangeLayout | resumeAgents
-omarchy-shell hypr-session ignore <classe>
-omarchy-shell hypr-session unignore <classe>
+omarchy-shell hypr-session save | restore | status
+omarchy-shell hypr-session set autoSave false
+omarchy-shell hypr-session ignore <classe>      # ou unignore
 ```
 
-## Como funciona
+## Arquivos
 
-- O plugin é um serviço que roda dentro do `omarchy-shell`. Ele salva o estado a cada evento de janela (abrir e mover esperam 1s, fechar espera 5s) e a cada 15s, e só regrava o arquivo quando algo muda.
-- Quando o Omarchy desliga, reinicia ou faz logout, ele fecha todas as janelas antes. O plugin detecta isso e para de salvar, para não gravar um desktop pela metade.
-- A restauração roda uma vez por sessão do Hyprland, cerca de 3s depois que o shell sobe. Reiniciar o shell ou recarregar o plugin nunca reabre os apps.
-- Para evitar que janelas apareçam no workspace errado, a restauração usa regras de janela temporárias por app, desativadas no final. Isso importa nos web apps e no Chrome, que abrem pela instância que já está rodando.
-- Depois de remontar o layout, o plugin confere cada janela com o que foi salvo e tenta de novo (até 3 vezes) se algo não bater.
+- `~/.local/state/hypr-session.json`: a sessão salva
+- `~/.local/state/hypr-session.log`: o que foi salvo e restaurado, útil quando algo não volta certo
 
-A lógica de decidir o que salvar e como montar o layout fica em `Model.js`, sem I/O, e é testada com node. O `Service.qml` lê o `/proc`, chama o `hyprctl` e espera.
+## Vindo da versão em script
 
-## Arquivos de estado
-
-| Arquivo | Conteúdo |
-|---|---|
-| `~/.local/state/hypr-session.json` | Estado salvo atual |
-| `~/.local/state/hypr-session.restored.json` | O que foi restaurado no último boot |
-| `~/.local/state/hypr-session.log` | Log de saves, da restauração e da remontagem do layout |
-
-O formato é o mesmo da versão em script: um estado salvo por ela restaura normalmente pelo plugin.
-
-## Testes
-
-```sh
-tests/run.sh
-```
-
-Roda os testes de unidade do `Model.js` (node) e os cenários de integração dentro do Quickshell, com um `hyprctl` falso e um `HOME` temporário. Nada toca o compositor, o shell em uso nem a sua sessão salva. Os cenários de integração precisam de uma sessão Wayland.
-
-## Migração da versão em script
-
-Se você usava o `hypr-session` em bash: remova os links `~/.local/bin/hypr-session` e `~/.config/omarchy/hooks/post-boot.d/restore-session`, pare o `hypr-session watch` que estiver rodando e instale o plugin. Com os dois ativos ao mesmo tempo, a sessão seria restaurada duas vezes.
+Apague `~/.local/bin/hypr-session` e `~/.config/omarchy/hooks/post-boot.d/restore-session` antes de instalar, senão a sessão é restaurada duas vezes. A sessão já salva continua valendo.
 
 ## Limitações
 
-- Codex e pi só criam a sessão depois da primeira mensagem. Um Codex ou pi aberto e nunca usado volta sem sessão.
-- Com dois Codex abertos na mesma pasta, os dois podem voltar na mesma conversa, a mais recente.
-- Layouts que não são do dwindle ficam como abriram (fica registrado no log).
-- Se o shell reiniciar no meio de uma restauração, ela não recomeça: use **Restaurar agora**.
+- Um Codex ou pi aberto e nunca usado volta sem conversa.
+- Dois Codex na mesma pasta podem voltar na mesma conversa.
+- Só o layout dwindle é remontado.
+- Se o shell reiniciar no meio de uma restauração, ela não recomeça sozinha. Use **Restaurar agora**.
