@@ -20,7 +20,7 @@ Convert hypr-session from a bash script + post-boot hook into one native Omarchy
 - T3 S5 BarWidget.qml + Panel.qml + settings persistence — inline — commit: b0bb34c (ui qs scenario green)
 - T4 S7 integration test (fake hyprctl) + validate — inline — commit: 02bce71, b0bb34c (tests/run.sh green: 23 unit + 4 qs files; omarchy plugin validate exit 0)
 - T5 S1,S8 remove script/hook/installer, rewrite README — inline — commit: 62e25de
-- T6 Live cutover (stop old watcher, remove links, enable plugin) — needs user consent — commit: n/a
+- T6 Live cutover (old links removed, plugin symlinked into ~/.config/omarchy/plugins and enabled) — inline — commit: d1490fa, 265be48 (live: shell stable, 9 apps saved, ws9 two-terminal restore 2/2 layout ok on attempt 1, no workspace switch)
 
 ## Log
 
@@ -28,3 +28,6 @@ Convert hypr-session from a bash script + post-boot hook into one native Omarchy
 - L2 (user, verbatim): "Mas eu quero converter o script no plugin. Eu não quero que eu tenha dois. Tipo, eu instalei o plugin, daí o plugin chama o script. Se for assim, eu uso o script direto, né? Idiota."
 - L3 (user, verbatim): "Vamos começar, para iniciar esta tá ótimo, depois a gente vai ajustando."
 - L4 Evidence: Qt 6.11 QML: no async/await (SyntaxError), generators + Promise work; FileView reads /proc with NULs; Omarchy runs post-boot via `sleep 2 && omarchy-hook post-boot`.
+- L5 (user, verbatim): "go" — authorized the live cutover.
+- L6 Evidence: the generator-based steps segfaulted omarchy-shell on the real desktop (QV4 CallQmlContextPropertyLookup from a resumed generator; fake-hyprctl tests never hit it). Shell gave up after 6 relaunches; plugin unlinked, shell restored. Rewritten as Promise chains (loop/each): 30 real-desktop saves, 0 crashes; live restore verified.
+- L7 (user, verbatim): "pora toda hora vc faz esse erro aqui" — the Quickshell crash dialog from test runs; tests/run.sh now sets QS_DISABLE_CRASH_HANDLER=1.
