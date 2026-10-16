@@ -19,7 +19,7 @@ ShellRoot {
   property string clientsText: ""
   property string restoredText: ""
   property string logText: ""
-  property bool settled: false
+  property int launches: 0
   Process { id: readCalls; command: ["cat", harness.fake + "/calls"]; stdout: StdioCollector { onStreamFinished: harness.callsText = text } }
   Process { id: readClients; command: ["cat", harness.fake + "/clients.json"]; stdout: StdioCollector { onStreamFinished: harness.clientsText = text } }
   Process { id: readRestored; command: ["cat", harness.home + "/.local/state/hypr-session.restored.json"]; stdout: StdioCollector { onStreamFinished: harness.restoredText = text } }
@@ -52,6 +52,12 @@ ShellRoot {
       until: function() {
         return JSON.parse(harness.restoredText || "[]").length === 3 && harness.service.lastRestoreText === "2/2 janelas, layout ok"
           && harness.service.restoring === false && harness.service.watching === true
+      } },
+    { name: "restoring again over the open apps launches nothing",
+      run: function() { harness.launches = harness.callsText.split("exec_cmd").length; harness.service.restore() },
+      until: function() {
+        return harness.waited > 1000 && !harness.service.restoring && harness.callsText.split("exec_cmd").length === harness.launches
+          && harness.logText.indexOf("restore: a already open, left alone") !== -1
       } },
     { name: "logs the restore",
       until: function() { return harness.logText.indexOf("restore: a 1/1 windows -> 3") !== -1 && harness.logText.indexOf("restore: 2 apps") !== -1 } }

@@ -200,3 +200,13 @@ test("the saved state from the old script still restores unchanged", () => {
   assert.equal(kept.length, entries.length)
   for (const e of kept) assert.ok(M.launchCommand(e).length > 0)
 })
+
+test("restoring over a live desktop skips apps whose windows are already open", () => {
+  const entries = [
+    { class: "foot", workspaces: ["1", "2"] }, { class: "foot", workspaces: ["3"] },
+    { class: "code", workspaces: ["1"] }, { class: "chrome", workspaces: ["2"] }
+  ]
+  const open = [win("0x1", 1, "foot", 1, 0, 0, 1, 1), win("0x2", 1, "foot", 1, 0, 0, 1, 1), win("0x3", 2, "code", 1, 0, 0, 1, 1)]
+  assert.deepEqual(M.alreadyOpen(entries, open), [true, false, true, false])
+  assert.deepEqual(M.alreadyOpen(entries, []), [false, false, false, false], "an empty desktop restores everything")
+})

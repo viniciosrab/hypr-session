@@ -357,7 +357,9 @@ Item {
       if (!entries.length) return
       restoredWriter.setText(read.out)
 
-      var claimed = addresses(yield hyprJson(["clients", "-j"]))
+      var before = (yield hyprJson(["clients", "-j"])) || []
+      var claimed = addresses(before)
+      var open = Model.alreadyOpen(entries, before)
       var placements = []
       var expected = 0
       var rules = Model.rulesLua(Model.ruleSpecs(entries))
@@ -367,6 +369,10 @@ Item {
         for (var i = 0; i < entries.length; i++) {
           var entry = entries[i]
           var cls = entry.class
+          if (open[i]) {
+            log("restore: " + cls + " already open, left alone")
+            continue
+          }
           var known = addresses(yield hyprJson(["clients", "-j"]))
 
           // A browser restoring its last session reopens its windows and web

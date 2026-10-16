@@ -207,6 +207,20 @@ function restorable(entries, settings) {
   return entries.filter(function(e) { return e && e.cmd && e.cmd.length > 0 && !isIgnored(settings, e.class) })
 }
 
+// Which entries already have their windows open (a restore over a live
+// desktop, e.g. "Restaurar agora"): open windows of a class are handed out to
+// that class's entries in order, and an entry fully covered is skipped.
+function alreadyOpen(entries, clients) {
+  var left = {}
+  clients.forEach(function(c) { left[c.class] = (left[c.class] || 0) + 1 })
+  return entries.map(function(e) {
+    var n = e.workspaces.length
+    if ((left[e.class] || 0) < n) return false
+    left[e.class] -= n
+    return true
+  })
+}
+
 // The command line for an entry, with its saved environment in front.
 function launchCommand(entry) {
   var env = entry.env ? Object.keys(entry.env).map(function(k) { return k + "=" + entry.env[k] }) : []
@@ -396,7 +410,7 @@ if (typeof module !== "undefined" && module.exports) {
     isWebAppClass: isWebAppClass, webAppKey: webAppKey, launcherUrl: launcherUrl, webAppUrl: webAppUrl,
     parseCmdline: parseCmdline, envDiff: envDiff, classifyProgram: classifyProgram, agentName: agentName,
     targets: targets, windowsOf: windowsOf, buildEntry: buildEntry, serializeEntries: serializeEntries, summary: summary,
-    restorable: restorable, launchCommand: launchCommand, ruleSpecs: ruleSpecs, rulesLua: rulesLua, launchLua: launchLua,
+    restorable: restorable, alreadyOpen: alreadyOpen, launchCommand: launchCommand, ruleSpecs: ruleSpecs, rulesLua: rulesLua, launchLua: launchLua,
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
     shuttingDown: shuttingDown, trimLog: trimLog, logLine: logLine, eventDelay: eventDelay
   }
