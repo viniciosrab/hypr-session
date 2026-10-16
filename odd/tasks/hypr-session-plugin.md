@@ -15,11 +15,11 @@ Convert hypr-session from a bash script + post-boot hook into one native Omarchy
 
 ## Tasks
 
-- T1 S2,S3 Model.js (layout plan, aim plan, entry building, webapp URL, rules, settings) + node tests — inline — commit: pending
-- T2 S1-S4,S6 Service.qml + manifest.json (coroutine runner, save, watch, restore, arrange, IPC, once-per-instance) — inline — commit: pending
-- T3 S5 BarWidget.qml + Panel.qml + settings persistence — inline — commit: pending
-- T4 S7 integration test (fake hyprctl) + validate — inline — commit: pending
-- T5 S1,S8 remove script/hook/installer, rewrite README — inline — commit: pending
+- T1 S2,S3 Model.js (layout plan, aim plan, entry building, webapp URL, rules, settings) + node tests — inline — commit: 737b479 (23 node tests green)
+- T2 S1-S4,S6 Service.qml + manifest.json (coroutine runner, save, watch, restore, arrange, IPC, once-per-instance) — inline — commit: 02bce71 (save, restore, norestore qs scenarios green)
+- T3 S5 BarWidget.qml + Panel.qml + settings persistence — inline — commit: b0bb34c (ui qs scenario green)
+- T4 S7 integration test (fake hyprctl) + validate — inline — commit: 02bce71, b0bb34c (tests/run.sh green: 23 unit + 4 qs files; omarchy plugin validate exit 0)
+- T5 S1,S8 remove script/hook/installer, rewrite README — inline — commit: 62e25de
 - T6 Live cutover (stop old watcher, remove links, enable plugin) — needs user consent — commit: n/a
 
 ## Log
