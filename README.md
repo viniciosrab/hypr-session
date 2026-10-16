@@ -24,7 +24,7 @@ Funciona sem configurar nada: o plugin salva a sessão e a restaura sozinho no p
 
 Dependências: `hyprland` (0.56+, configuração em Lua), `sqlite3` (só para retomar o Codex).
 
-Para ver o ícone na barra: `omarchy bar move vinicios.hypr-session --section right`.
+Para ver o ícone na barra: `omarchy bar put vinicios.hypr-session --section right`.
 
 ## Painel
 
