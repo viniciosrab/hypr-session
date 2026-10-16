@@ -1,0 +1,30 @@
+#!/bin/sh
+# Stands in for hyprctl so tests never touch the live compositor. State lives
+# under $FAKE_HYPR: clients.json (what `clients -j` prints), calls (every
+# invocation, one per line). exec_cmd opens a window of class X for a command
+# containing "fakeapp-X", on workspace 1; window.move updates its workspace.
+f=${FAKE_HYPR:?}
+printf '%s\n' "$*" >>"$f/calls"
+case $1 in
+  clients) cat "$f/clients.json" ;;
+  monitors) echo '[{"activeWorkspace":{"name":"1"},"specialWorkspace":{"name":""}}]' ;;
+  activewindow) echo '{}' ;;
+  cursorpos) echo '100, 100' ;;
+  getoption) printf 'float: 1.000000\nset: true\n' ;;
+  eval) ;;
+  dispatch)
+    case $2 in
+      *exec_cmd*)
+        cls=$(printf '%s' "$2" | sed -n 's/.*fakeapp-\([A-Za-z0-9]*\).*/\1/p')
+        [ -n "$cls" ] || exit 0
+        n=$(jq length "$f/clients.json")
+        jq --arg c "$cls" --arg a "0x$((n + 100))" \
+          '. + [{address: $a, class: $c, pid: 1, workspace: {id: 1, name: "1"}, at: [0, 0], size: [10, 10], floating: false}]' \
+          "$f/clients.json" >"$f/clients.tmp" && mv "$f/clients.tmp" "$f/clients.json" ;;
+      *window.move*workspace*)
+        ws=$(printf '%s' "$2" | sed -n 's/.*workspace = "\([^"]*\)".*/\1/p')
+        addr=$(printf '%s' "$2" | sed -n 's/.*address:\([0-9a-fx]*\).*/\1/p')
+        jq --arg w "$ws" --arg a "$addr" 'map(if .address == $a then .workspace = {id: 1, name: $w} else . end)' \
+          "$f/clients.json" >"$f/clients.tmp" && mv "$f/clients.tmp" "$f/clients.json" ;;
+    esac ;;
+esac
