@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "vinicios.hypr-session",
+  "name": "Hypr Session",
+  "version": "1.0.0",
+  "author": "Vinicios",
+  "license": "MIT",
+  "description": "Saves the Hyprland session and restores it after a reboot: apps on their workspaces, terminals running what they ran, and the exact dwindle layout.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Hypr Session",
+    "description": "Last save, save and restore now, and what to save",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
