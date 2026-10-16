@@ -34,7 +34,7 @@ for test in "$source_root"/tests/integration/${ONLY:-*}.qml; do
   cp -- "$test" "$work/app/shell.qml"
   echo '[]' >"$work/fake/clients.json"
 
-  env -u HYPR_SESSION_FILE XDG_STATE_HOME="$work/home/.local/state" HOME="$work/home" PATH="$source_root/tests/bin:$PATH" FAKE_HYPR="$work/fake" FAKE_PID="$sleeper" \
+  env -u HYPR_SESSION_FILE QS_DISABLE_CRASH_HANDLER=1 XDG_STATE_HOME="$work/home/.local/state" HOME="$work/home" PATH="$source_root/tests/bin:$PATH" FAKE_HYPR="$work/fake" FAKE_PID="$sleeper" \
     HYPR_SESSION_MARKER="$work/marker" timeout 90s qs --no-color -p "$work/app" >"$work/output" 2>&1 || true
 
   if grep -q SESSION_PASS "$work/output" \

@@ -10,8 +10,8 @@ import "Model.js" as Model
 //
 // What to save and how to lay it out is decided in Model.js (pure, tested
 // under node). This file does the I/O: it reads /proc, runs hyprctl and
-// waits. The restore is a long sequence of "do, wait, check" steps, so it is
-// written as generators run by `co()` (this QML has no async/await).
+// waits. The restore is a long sequence of "do, wait, check" steps, written
+// as Promise chains with `loop()` and `each()`.
 //
 // The state files and their format are the ones the old bash script used:
 //   ~/.local/state/hypr-session.json           saved session
@@ -106,17 +106,19 @@ Item {
     })
   }
 
-  // Runs a generator as a sequence of steps; every yielded Promise is awaited.
-  function co(generator) {
-    return new Promise(function(resolve, reject) {
-      var it = generator()
-      function step(method, arg) {
-        var r
-        try { r = it[method](arg) } catch (e) { reject(e); return }
-        if (r.done) resolve(r.value)
-        else Promise.resolve(r.value).then(function(v) { step("next", v) }, function(e) { step("throw", e) })
-      }
-      step("next")
+  // Runs fn() until it resolves to false. Each step is a plain Promise chain:
+  // generators resumed from Qt events crashed this Quickshell build.
+  function loop(fn) {
+    return Promise.resolve(fn()).then(function(again) { return again ? loop(fn) : null })
+  }
+
+  // fn(item, index) for each item, one after another.
+  function each(list, fn) {
+    var i = 0
+    return loop(function() {
+      if (i >= list.length) return false
+      var k = i++
+      return Promise.resolve(fn(list[k], k)).then(function() { return true })
     })
   }
 
@@ -175,19 +177,21 @@ Item {
   // ---- Shutdown detection -----------------------------------------------------------
 
   function isShuttingDown() {
-    return co(function*() {
-      var facts = { uwsmStop: false, systemState: "", timerExecStarts: [] }
-      facts.uwsmStop = (yield run(["pgrep", "-f", "uwsm stop"])).code === 0
+    var facts = { uwsmStop: false, systemState: "", timerExecStarts: [] }
+    return run(["pgrep", "-f", "uwsm stop"]).then(function(r) {
+      facts.uwsmStop = r.code === 0
       if (facts.uwsmStop) return true
-      facts.systemState = (yield run(["systemctl", "is-system-running"])).out
-      if (Model.shuttingDown(facts)) return true
-      var timers = (yield run(["systemctl", "--user", "list-units", "--type=timer", "--plain", "--no-legend", "run-*"])).out
-      var names = timers.split("\n").map(function(l) { return l.trim().split(/\s+/)[0] }).filter(function(n) { return n })
-      for (var i = 0; i < names.length; i++) {
-        var service = names[i].replace(/\.timer$/, ".service")
-        facts.timerExecStarts.push((yield run(["systemctl", "--user", "show", service, "-p", "ExecStart", "--value"])).out)
-      }
-      return Model.shuttingDown(facts)
+      return run(["systemctl", "is-system-running"]).then(function(r2) {
+        facts.systemState = r2.out
+        if (Model.shuttingDown(facts)) return true
+        return run(["systemctl", "--user", "list-units", "--type=timer", "--plain", "--no-legend", "run-*"]).then(function(r3) {
+          var names = r3.out.split("\n").map(function(l) { return l.trim().split(/\s+/)[0] }).filter(function(n) { return n })
+          return each(names, function(name) {
+            return run(["systemctl", "--user", "show", name.replace(/\.timer$/, ".service"), "-p", "ExecStart", "--value"])
+              .then(function(r4) { facts.timerExecStarts.push(r4.out) })
+          })
+        }).then(function() { return Model.shuttingDown(facts) })
+      })
     })
   }
 
@@ -231,108 +235,139 @@ Item {
     })
   }
 
+  // The session an agent process `pid` is in (Claude, Codex, pi), or "".
+  function sessionId(name, pid, cwd) {
+    if (name === "claude") {
+      try { return Promise.resolve(JSON.parse(readFile(home + "/.claude/sessions/" + pid + ".json")).sessionId || "") }
+      catch (e) { return Promise.resolve("") }
+    }
+    if (name === "codex") {
+      // Codex logs threads under a shared daemon: the thread last active in
+      // this directory since this codex started
+      var sql = "select id from threads where cwd = '" + cwd.replace(/'/g, "''") + "' and updated_at >= " + procStart(pid)
+        + " order by updated_at desc limit 1"
+      return run(["sqlite3", "-readonly", home + "/.codex/state_5.sqlite", sql]).then(function(r) { return r.out.trim() })
+    }
+    if (name === "pi") {
+      // pi keeps one file per session in a folder named after the directory
+      var dir = home + "/.pi/agent/sessions/--" + cwd.replace(/^\//, "").replace(/\//g, "-") + "--"
+      return run(["find", dir, "-name", "*.jsonl", "-newermt", "@" + procStart(pid), "-printf", "%T@ %f\\n"]).then(function(r) {
+        var newest = r.out.split("\n").filter(function(l) { return l }).sort(function(a, b) { return parseFloat(b) - parseFloat(a) })[0] || ""
+        var m = /_([0-9a-f-]+)\.jsonl$/.exec(newest)
+        return m ? m[1] : ""
+      })
+    }
+    return Promise.resolve("")
+  }
+
   // The program running inside terminal `pid`: { cwd, command } or null.
   function terminalProgram(pid, table, cwdOf) {
-    return co(function*() {
-      var queue = [String(pid)]
-      while (queue.length) {
-        var current = queue.shift()
-        queue = queue.concat(table.children[current] || [])
-        var name = table.name[current] || ""
-        var cwd = cwdOf[current] || ""
-        var id = ""
-        if (name === "claude") {
-          try { id = JSON.parse(readFile(home + "/.claude/sessions/" + current + ".json")).sessionId || "" } catch (e) { id = "" }
-        } else if (name === "codex") {
-          var start = procStart(current)
-          var sql = "select id from threads where cwd = '" + cwd.replace(/'/g, "''") + "' and updated_at >= " + start
-            + " order by updated_at desc limit 1"
-          id = (yield run(["sqlite3", "-readonly", home + "/.codex/state_5.sqlite", sql])).out.trim()
-        } else if (name === "pi") {
-          var dir = home + "/.pi/agent/sessions/--" + cwd.replace(/^\//, "").replace(/\//g, "-") + "--"
-          var found = (yield run(["find", dir, "-name", "*.jsonl", "-newermt", "@" + procStart(current), "-printf", "%T@ %f\\n"])).out
-          var newest = found.split("\n").filter(function(l) { return l }).sort(function(a, b) { return parseFloat(b) - parseFloat(a) })[0] || ""
-          var m = /_([0-9a-f-]+)\.jsonl$/.exec(newest)
-          id = m ? m[1] : ""
-        }
+    var queue = [String(pid)]
+    function next() {
+      if (!queue.length) return Promise.resolve(null)
+      var current = queue.shift()
+      queue = queue.concat(table.children[current] || [])
+      var name = table.name[current] || ""
+      var cwd = cwdOf[current] || ""
+      return sessionId(name, current, cwd).then(function(id) {
         var args = Model.agentName(name) ? [] : Model.parseCmdline(readFile("/proc/" + current + "/cmdline"))
         var program = Model.classifyProgram(name, cwd, id, args, settings.resumeAgents)
-        if (program) return program
-      }
-      return null
+        return program ? program : next()
+      })
+    }
+    return next()
+  }
+
+  function rememberOpen(clients) {
+    root.openClasses = Model.targets(clients, null).map(function(t) { return t.class })
+      .filter(function(c, i, all) { return all.indexOf(c) === i }).sort()
+  }
+
+  function launcherUrls(ctx) {
+    if (ctx.launcherUrls) return Promise.resolve(ctx.launcherUrls)
+    return run(["grep", "-rhs", "--include=*.desktop", "^Exec=omarchy-launch-webapp", home + "/.local/share/applications"]).then(function(r) {
+      ctx.launcherUrls = r.out.split("\n").map(Model.launcherUrl).filter(function(u) { return u })
+      return ctx.launcherUrls
+    })
+  }
+
+  function entryFor(t, clients, ctx) {
+    var cmdline = readFile("/proc/" + t.pid + "/cmdline")
+    if (cmdline === "") return Promise.resolve(null)
+    var terminal = Model.TERMINALS.indexOf(t.class) !== -1
+    var web = Model.isWebAppClass(t.class)
+    var webUrl = ""
+    var urls = web ? launcherUrls(ctx).then(function(list) { webUrl = Model.webAppUrl(t.class, list) }) : Promise.resolve()
+    return urls.then(function() {
+      return terminal ? terminalProgram(t.pid, ctx.table, ctx.cwdOf) : null
+    }).then(function(program) {
+      var kids = ctx.table.children[String(t.pid)]
+      return Model.buildEntry({
+        class: t.class,
+        windows: Model.windowsOf(clients, t.pid, t.class),
+        cmdline: cmdline,
+        webUrl: webUrl,
+        cwd: terminal && kids ? ctx.cwdOf[kids[0]] || "" : "",
+        program: program,
+        env: terminal || web ? {} : Model.envDiff(sessionEnv, readFile("/proc/" + t.pid + "/environ")),
+        shell: Quickshell.env("SHELL") || "zsh"
+      })
+    })
+  }
+
+  function snapshot(clients) {
+    rememberOpen(clients)
+    var targets = Model.targets(clients, settings)
+    var terminalPids = targets.filter(function(t) { return Model.TERMINALS.indexOf(t.class) !== -1 }).map(function(t) { return t.pid })
+    var ctx = { table: { children: {}, name: {} }, cwdOf: {}, launcherUrls: null }
+    var entries = []
+    return (terminalPids.length ? processTable() : Promise.resolve(ctx.table)).then(function(table) {
+      ctx.table = table
+      var pids = []
+      terminalPids.forEach(function(pid) {
+        var queue = [String(pid)]
+        while (queue.length && pids.length < 400) {
+          var current = queue.shift()
+          pids.push(current)
+          queue = queue.concat(table.children[current] || [])
+        }
+      })
+      return cwds(pids)
+    }).then(function(cwdOf) {
+      ctx.cwdOf = cwdOf
+      return each(targets, function(t) {
+        return entryFor(t, clients, ctx).then(function(entry) { if (entry) entries.push(entry) })
+      })
+    }).then(function() { return entries })
+  }
+
+  function writeState(entries) {
+    var text = Model.serializeEntries(entries)
+    root.lastSaveAt = Date.now()
+    root.lastSaveApps = entries.length
+    if (text === stateText) return Promise.resolve()
+    return run(["mkdir", "-p", stateDir]).then(function() {
+      stateWriter.setText(text)
+      stateText = text
+      log("save: " + Model.summary(entries))
+    })
+  }
+
+  function saveOnce() {
+    if (ending) return Promise.resolve()
+    return isShuttingDown().then(function(down) {
+      if (down) return null
+      return hyprJson(["clients", "-j"]).then(function(clients) {
+        if (!clients || clients.length === 0) return null // never overwrite with an empty desktop
+        return snapshot(clients).then(writeState)
+      })
     })
   }
 
   function save() {
     if (saving) { saveAgain = true; return Promise.resolve() }
     saving = true
-    return co(function*() {
-      try {
-        if (ending || (yield isShuttingDown())) return
-        var clients = yield hyprJson(["clients", "-j"])
-        if (!clients || clients.length === 0) return // never overwrite with an empty desktop
-        root.openClasses = Model.targets(clients, null).map(function(t) { return t.class })
-          .filter(function(c, i, all) { return all.indexOf(c) === i }).sort()
-
-        var targets = Model.targets(clients, settings)
-        var terminalPids = targets.filter(function(t) { return Model.TERMINALS.indexOf(t.class) !== -1 }).map(function(t) { return t.pid })
-        var table = { children: {}, name: {} }
-        if (terminalPids.length) table = yield processTable()
-        var cwdPids = []
-        terminalPids.forEach(function(pid) {
-          var queue = [String(pid)]
-          while (queue.length && cwdPids.length < 400) {
-            var current = queue.shift()
-            cwdPids.push(current)
-            queue = queue.concat(table.children[current] || [])
-          }
-        })
-        var cwdOf = yield cwds(cwdPids)
-
-        var launcherUrls = null
-        var shell = Quickshell.env("SHELL") || "zsh"
-        var entries = []
-        for (var i = 0; i < targets.length; i++) {
-          var t = targets[i]
-          var cmdline = readFile("/proc/" + t.pid + "/cmdline")
-          if (cmdline === "") continue
-          var terminal = Model.TERMINALS.indexOf(t.class) !== -1
-          var webUrl = ""
-          if (Model.isWebAppClass(t.class)) {
-            if (launcherUrls === null) {
-              var grep = yield run(["grep", "-rhs", "--include=*.desktop", "^Exec=omarchy-launch-webapp", home + "/.local/share/applications"])
-              launcherUrls = grep.out.split("\n").map(Model.launcherUrl).filter(function(u) { return u })
-            }
-            webUrl = Model.webAppUrl(t.class, launcherUrls)
-          }
-          var program = null
-          if (terminal) program = yield terminalProgram(t.pid, table, cwdOf)
-          var entry = Model.buildEntry({
-            class: t.class,
-            windows: Model.windowsOf(clients, t.pid, t.class),
-            cmdline: cmdline,
-            webUrl: webUrl,
-            cwd: terminal ? (table.children[String(t.pid)] && cwdOf[table.children[String(t.pid)][0]]) || "" : "",
-            program: program,
-            env: terminal || Model.isWebAppClass(t.class) ? {} : Model.envDiff(sessionEnv, readFile("/proc/" + t.pid + "/environ")),
-            shell: shell
-          })
-          if (entry) entries.push(entry)
-        }
-
-        var text = Model.serializeEntries(entries)
-        root.lastSaveAt = Date.now()
-        root.lastSaveApps = entries.length
-        if (text !== stateText) {
-          yield run(["mkdir", "-p", stateDir])
-          stateWriter.setText(text)
-          stateText = text
-          log("save: " + Model.summary(entries))
-        }
-      } catch (e) {
-        log("save: failed: " + e)
-      }
-    }).then(function() {
+    return saveOnce().then(null, function(e) { log("save: failed: " + e) }).then(function() {
       saving = false
       if (saveAgain) { saveAgain = false; save() }
     })
@@ -346,74 +381,86 @@ Item {
     return hypr(["dispatch", "hl.dsp.window.move({ workspace = \"" + ws + "\", follow = false, window = \"address:" + addr + "\" })"])
   }
 
+  function rulesOff() { return hypr(["eval", Model.RULES_OFF_LUA]) }
+
+  // Launches one saved app (unless its windows are open already) and sends
+  // each new window to its saved workspace. `r` collects across apps.
+  function restoreEntry(entry, i, r) {
+    var cls = entry.class
+    if (r.open[i]) {
+      log("restore: " + cls + " already open, left alone")
+      return Promise.resolve()
+    }
+    // A browser restoring its last session reopens its windows and web apps
+    // by itself: take those over instead of opening duplicates
+    var browser = /^(google-chrome|chromium|Chromium|brave-browser|chrome-.+)$/.test(cls)
+    var known = []
+    var placed = 0
+    return hyprJson(["clients", "-j"]).then(function(clients) {
+      known = browser ? r.claimed.slice() : addresses(clients)
+      return browser ? sleep(1000) : null
+    }).then(function() {
+      return hyprJson(["clients", "-j"])
+    }).then(function(clients) {
+      var already = (clients || []).some(function(c) { return c.class === cls && known.indexOf(c.address) === -1 })
+      if (!already) return hypr(["dispatch", Model.launchLua(entry, entry.workspaces[0])])
+    }).then(function() {
+      // Wait up to 20s for the app's windows
+      var tick = 0
+      return loop(function() {
+        if (tick >= 40 || placed >= entry.workspaces.length) return false
+        tick++
+        return sleep(500).then(function() {
+          return hyprJson(["clients", "-j"])
+        }).then(function(clients) {
+          var fresh = (clients || []).filter(function(c) { return c.class === cls && known.indexOf(c.address) === -1 })
+          return each(fresh, function(c) {
+            if (placed >= entry.workspaces.length) return null
+            var n = placed++
+            known.push(c.address)
+            r.claimed.push(c.address)
+            var spot = Model.placement(entry, c.address, n)
+            if (spot) r.placements.push(spot)
+            return moveWindow(c.address, entry.workspaces[n])
+          })
+        }).then(function() { return true })
+      })
+    }).then(function() {
+      r.expected += entry.workspaces.length
+      log("restore: " + cls + " " + placed + "/" + entry.workspaces.length + " windows -> " + entry.workspaces.join(" "))
+    })
+  }
+
+  function restoreOnce() {
+    return run(["cat", statePath]).then(function(read) {
+      var entries
+      try { entries = JSON.parse(read.out) } catch (e) { return null }
+      entries = Model.restorable(entries, settings)
+      if (!entries.length) return null
+      restoredWriter.setText(read.out)
+      var r = { placements: [], expected: 0, claimed: [], open: [] }
+      return hyprJson(["clients", "-j"]).then(function(before) {
+        r.claimed = addresses(before)
+        r.open = Model.alreadyOpen(entries, before || [])
+        return hypr(["eval", Model.rulesLua(Model.ruleSpecs(entries))])
+      }).then(function() {
+        log("restore: " + entries.length + " apps")
+        return each(entries, function(entry, i) { return restoreEntry(entry, i, r) })
+      }).then(function() {
+        return settings.rearrangeLayout ? arrange(r.placements) : []
+      }).then(function(off) {
+        root.lastRestoreText = r.placements.length + "/" + r.expected + " janelas"
+          + (settings.rearrangeLayout ? (off.length ? ", layout com " + off.length + " fora" : ", layout ok") : "")
+      }).then(rulesOff, function(e) {
+        return rulesOff().then(function() { throw e })
+      }).then(function() { root.lastRestoreAt = Date.now() })
+    })
+  }
+
   function restore() {
     if (restoring) return Promise.resolve()
     restoring = true
-    return co(function*() {
-      var read = yield run(["cat", statePath])
-      var entries
-      try { entries = JSON.parse(read.out) } catch (e) { return }
-      entries = Model.restorable(entries, settings)
-      if (!entries.length) return
-      restoredWriter.setText(read.out)
-
-      var before = (yield hyprJson(["clients", "-j"])) || []
-      var claimed = addresses(before)
-      var open = Model.alreadyOpen(entries, before)
-      var placements = []
-      var expected = 0
-      var rules = Model.rulesLua(Model.ruleSpecs(entries))
-      yield hypr(["eval", rules])
-      log("restore: " + entries.length + " apps")
-      try {
-        for (var i = 0; i < entries.length; i++) {
-          var entry = entries[i]
-          var cls = entry.class
-          if (open[i]) {
-            log("restore: " + cls + " already open, left alone")
-            continue
-          }
-          var known = addresses(yield hyprJson(["clients", "-j"]))
-
-          // A browser restoring its last session reopens its windows and web
-          // apps by itself: take those over instead of opening duplicates
-          if (/^(google-chrome|chromium|Chromium|brave-browser|chrome-.+)$/.test(cls)) {
-            known = claimed.slice()
-            yield sleep(1000)
-          }
-          var already = ((yield hyprJson(["clients", "-j"])) || []).some(function(c) {
-            return c.class === cls && known.indexOf(c.address) === -1
-          })
-          if (!already) yield hypr(["dispatch", Model.launchLua(entry, entry.workspaces[0])])
-
-          // Wait up to 20s for the app's windows and send each to its saved workspace
-          var placed = 0
-          for (var tick = 0; tick < 40 && placed < entry.workspaces.length; tick++) {
-            yield sleep(500)
-            var now = (yield hyprJson(["clients", "-j"])) || []
-            var fresh = now.filter(function(c) { return c.class === cls && known.indexOf(c.address) === -1 })
-            for (var j = 0; j < fresh.length && placed < entry.workspaces.length; j++) {
-              var addr = fresh[j].address
-              yield moveWindow(addr, entry.workspaces[placed])
-              var spot = Model.placement(entry, addr, placed)
-              if (spot) placements.push(spot)
-              known.push(addr)
-              claimed.push(addr)
-              placed++
-            }
-          }
-          expected += entry.workspaces.length
-          log("restore: " + cls + " " + placed + "/" + entry.workspaces.length + " windows -> " + entry.workspaces.join(" "))
-        }
-        var off = []
-        if (settings.rearrangeLayout) off = yield arrange(placements)
-        root.lastRestoreText = placements.length + "/" + expected + " janelas"
-          + (settings.rearrangeLayout ? (off.length ? ", layout com " + off.length + " fora" : ", layout ok") : "")
-      } finally {
-        yield hypr(["eval", Model.RULES_OFF_LUA])
-      }
-      root.lastRestoreAt = Date.now()
-    }).then(function() { restoring = false }, function(e) {
+    return restoreOnce().then(function() { restoring = false }, function(e) {
       restoring = false
       log("restore: failed: " + e)
     })
@@ -422,15 +469,15 @@ Item {
   // Make window `a` the tiled window under the cursor on workspace `ws` (the
   // one dwindle splits next), by moving the split lines around it.
   function aim(a, ws) {
-    return co(function*() {
-      var cursor = (yield hypr(["cursorpos"])).out.replace(/,/g, " ").trim().split(/\s+/)
+    return hypr(["cursorpos"]).then(function(r) {
+      var cursor = r.out.replace(/,/g, " ").trim().split(/\s+/)
       var px = parseFloat(cursor[0]), py = parseFloat(cursor[1])
-      var axes = ["x", "y", "x", "y"]
-      for (var i = 0; i < axes.length; i++) {
-        var clients = (yield hyprJson(["clients", "-j"])) || []
-        var plan = Model.aimPlan(clients, a, ws, axes[i], px, py)
-        if (plan) yield dispatch("hl.dsp.window.resize({ x = " + plan.w + ", y = " + plan.h + ", window = \"address:" + plan.addr + "\" })")
-      }
+      return each(["x", "y", "x", "y"], function(axis) {
+        return hyprJson(["clients", "-j"]).then(function(clients) {
+          var plan = Model.aimPlan(clients || [], a, ws, axis, px, py)
+          if (plan) return dispatch("hl.dsp.window.resize({ x = " + plan.w + ", y = " + plan.h + ", window = \"address:" + plan.addr + "\" })")
+        })
+      })
     })
   }
 
@@ -446,98 +493,137 @@ Item {
     return hypr(["getoption", name]).then(function(r) { return (r.out.split("\n")[0].trim().split(/\s+/)[1]) || "" })
   }
 
+  // One build of workspace `ws`: park every window but the first as floating
+  // (floating windows are not part of the tiling tree), tile them back one
+  // split at a time, resize, and return the windows still off.
+  function buildOnce(ws, wins, plan, st) {
+    var on = []
+    var shown = false
+    return onScreen().then(function(names) {
+      on = names
+      shown = on.indexOf(ws) !== -1
+      return hyprJson(["activewindow", "-j"])
+    }).then(function(active) {
+      // Dwindle splits the focused window whenever it sits on the workspace
+      // being built; hand focus to one already on screen.
+      if (shown || !active || !active.workspace || active.workspace.name !== ws) return null
+      return hyprJson(["clients", "-j"]).then(function(clients) {
+        var visible = (clients || []).filter(function(c) { return on.indexOf(c.workspace.name) !== -1 })
+          .sort(function(a, b) { return a.focusHistoryID - b.focusHistoryID })[0]
+        if (visible) return dispatch("hl.dsp.focus({ window = \"address:" + visible.address + "\" })")
+      })
+    }).then(function() {
+      return each(plan.splits, function(split) {
+        return dispatch("hl.dsp.window.float({ action = \"enable\", window = \"address:" + split.add + "\" })")
+      })
+    }).then(function() {
+      return each(plan.splits, function(split) {
+        var ready = shown
+          // On screen, dwindle splits the focused window; it is visible
+          // already, so focusing it changes nothing on screen
+          ? dispatch("hl.dsp.focus({ window = \"address:" + split.base + "\" })").then(function() {
+              return dispatch("hl.dsp.layout(\"preselect " + split.dir + "\")")
+            })
+          : aim(split.base, ws).then(function() {
+              var m = split.dir === "r" ? 0.01 : 100
+              return hypr(["eval", "hl.config({ dwindle = { split_width_multiplier = " + m + ", force_split = 2 } })"])
+            })
+        return ready.then(function() {
+          return dispatch("hl.dsp.window.float({ action = \"disable\", window = \"address:" + split.add + "\" })")
+        })
+      })
+    }).then(function() {
+      return hypr(["eval", "hl.config({ dwindle = { split_width_multiplier = " + st.multiplier + ", force_split = " + st.force + " } })"])
+    }).then(function() {
+      // Two passes: each resize moves the splits the next window hangs off
+      return each([0, 1], function() {
+        return each(wins, function(w) {
+          return dispatch("hl.dsp.window.resize({ x = " + w.w + ", y = " + w.h + ", window = \"address:" + w.addr + "\" })")
+        })
+      })
+    }).then(function() {
+      return hyprJson(["clients", "-j"])
+    }).then(function(clients) {
+      return Model.offWindows(clients || [], wins)
+    })
+  }
+
+  // Apps still settling right after launch can knock a split off, so check
+  // the result against the saved rectangles and rebuild when off (3 tries).
+  function arrangeWorkspace(ws, tiled, st) {
+    var wins = tiled.filter(function(p) { return p.ws === ws })
+    if (wins.length < 2) return Promise.resolve([])
+    var plan = Model.layoutPlan(wins)
+    if (!plan) {
+      log("arrange: " + ws + " is not a dwindle layout, left as launched")
+      return Promise.resolve([])
+    }
+    var attempt = 0
+    var off = []
+    return loop(function() {
+      attempt++
+      return buildOnce(ws, wins, plan, st).then(function(result) {
+        off = result
+        if (!off.length) return false
+        return hypr(["cursorpos"]).then(function(c) {
+          log("arrange: " + ws + " attempt " + attempt + " off (cursor " + c.out.trim() + "): " + off.join("; "))
+          if (attempt >= 3) return false
+          return sleep(2000).then(function() { return true })
+        })
+      })
+    }).then(function() {
+      log("arrange: " + ws + " rebuilt (" + wins.length + " windows, attempt " + attempt + (off.length ? ", still off" : "") + ")")
+      return off
+    })
+  }
+
+  // Give focus back if that window is on screen (focusing a hidden one would show it)
+  function refocus(focused) {
+    if (!focused) return Promise.resolve()
+    var on = []
+    return onScreen().then(function(names) {
+      on = names
+      return hyprJson(["clients", "-j"])
+    }).then(function(clients) {
+      var still = (clients || []).some(function(c) { return c.address === focused && on.indexOf(c.workspace.name) !== -1 })
+      if (still) return dispatch("hl.dsp.focus({ window = \"address:" + focused + "\" })")
+    })
+  }
+
   // Put every restored window back where it was, without ever focusing or
   // showing anything: floating ones at their exact position and size, tiled
   // ones rebuilt split by split on their (hidden) workspace, then resized.
-  // Returns the windows still off at the end.
+  // On a workspace that is not on screen, dwindle splits the window closest
+  // to the cursor, side by side or stacked depending on
+  // split_width_multiplier. Resolves to the windows still off at the end.
   function arrange(placements) {
-    return co(function*() {
-      var allOff = []
-      if (!placements.length) return allOff
-
-      var floaters = placements.filter(function(p) { return p.floating })
-      for (var f = 0; f < floaters.length; f++) {
-        var fl = floaters[f]
-        yield dispatch("hl.dsp.window.float({ action = \"enable\", window = \"address:" + fl.addr + "\" })")
-        yield dispatch("hl.dsp.window.resize({ x = " + fl.w + ", y = " + fl.h + ", window = \"address:" + fl.addr + "\" })")
-        yield dispatch("hl.dsp.window.move({ x = " + fl.x + ", y = " + fl.y + ", window = \"address:" + fl.addr + "\" })")
-      }
-
-      var focusedWindow = yield hyprJson(["activewindow", "-j"])
-      var focused = focusedWindow && focusedWindow.address ? focusedWindow.address : ""
-      var multiplier = yield option("dwindle:split_width_multiplier")
-      var force = yield option("dwindle:force_split")
-
-      var tiled = placements.filter(function(p) { return !p.floating })
-      var workspaces = tiled.map(function(p) { return p.ws }).filter(function(w, i, all) { return all.indexOf(w) === i }).sort()
-      for (var w = 0; w < workspaces.length; w++) {
-        var ws = workspaces[w]
-        var wins = tiled.filter(function(p) { return p.ws === ws })
-        if (wins.length < 2) continue
-        var plan = Model.layoutPlan(wins)
-        if (!plan) { log("arrange: " + ws + " is not a dwindle layout, left as launched"); continue }
-
-        // Apps still settling right after launch can knock a split off, so
-        // check the result against the saved rectangles and rebuild when off
-        var off = []
-        var attempt
-        for (attempt = 1; attempt <= 3; attempt++) {
-          var on = yield onScreen()
-          var shown = on.indexOf(ws) !== -1
-          // Dwindle splits the focused window whenever it sits on the
-          // workspace being built; hand focus to one already on screen.
-          var active = yield hyprJson(["activewindow", "-j"])
-          if (!shown && active && active.workspace && active.workspace.name === ws) {
-            var visible = ((yield hyprJson(["clients", "-j"])) || []).filter(function(c) { return on.indexOf(c.workspace.name) !== -1 })
-              .sort(function(a, b) { return a.focusHistoryID - b.focusHistoryID })[0]
-            if (visible) yield dispatch("hl.dsp.focus({ window = \"address:" + visible.address + "\" })")
-          }
-
-          // Park every window but the first as floating (floating windows are
-          // not part of the tiling tree), then tile them back one at a time.
-          var s
-          for (s = 0; s < plan.splits.length; s++) {
-            yield dispatch("hl.dsp.window.float({ action = \"enable\", window = \"address:" + plan.splits[s].add + "\" })")
-          }
-          for (s = 0; s < plan.splits.length; s++) {
-            var split = plan.splits[s]
-            if (shown) {
-              yield dispatch("hl.dsp.focus({ window = \"address:" + split.base + "\" })")
-              yield dispatch("hl.dsp.layout(\"preselect " + split.dir + "\")")
-            } else {
-              yield aim(split.base, ws)
-              var m = split.dir === "r" ? 0.01 : 100
-              yield hypr(["eval", "hl.config({ dwindle = { split_width_multiplier = " + m + ", force_split = 2 } })"])
-            }
-            yield dispatch("hl.dsp.window.float({ action = \"disable\", window = \"address:" + split.add + "\" })")
-          }
-          yield hypr(["eval", "hl.config({ dwindle = { split_width_multiplier = " + multiplier + ", force_split = " + force + " } })"])
-
-          // Two passes: each resize moves the splits the next window hangs off
-          for (var pass = 0; pass < 2; pass++) {
-            for (var k = 0; k < wins.length; k++) {
-              yield dispatch("hl.dsp.window.resize({ x = " + wins[k].w + ", y = " + wins[k].h + ", window = \"address:" + wins[k].addr + "\" })")
-            }
-          }
-
-          off = Model.offWindows((yield hyprJson(["clients", "-j"])) || [], wins)
-          if (off.length === 0) break
-          log("arrange: " + ws + " attempt " + attempt + " off (cursor " + (yield hypr(["cursorpos"])).out.trim() + "): " + off.join("; "))
-          yield sleep(2000)
-        }
-        if (attempt > 3) attempt = 3
-        log("arrange: " + ws + " rebuilt (" + wins.length + " windows, attempt " + attempt + (off.length ? ", still off" : "") + ")")
-        allOff = allOff.concat(off)
-      }
-
-      // Give focus back if that window is on screen (focusing a hidden one would show it)
-      if (focused) {
-        var onNow = yield onScreen()
-        var still = ((yield hyprJson(["clients", "-j"])) || []).some(function(c) { return c.address === focused && onNow.indexOf(c.workspace.name) !== -1 })
-        if (still) yield dispatch("hl.dsp.focus({ window = \"address:" + focused + "\" })")
-      }
-      return allOff
-    })
+    var allOff = []
+    if (!placements.length) return Promise.resolve(allOff)
+    var st = { focused: "", multiplier: "", force: "" }
+    var tiled = placements.filter(function(p) { return !p.floating })
+    var workspaces = tiled.map(function(p) { return p.ws }).filter(function(w, i, all) { return all.indexOf(w) === i }).sort()
+    return each(placements.filter(function(p) { return p.floating }), function(fl) {
+      return dispatch("hl.dsp.window.float({ action = \"enable\", window = \"address:" + fl.addr + "\" })").then(function() {
+        return dispatch("hl.dsp.window.resize({ x = " + fl.w + ", y = " + fl.h + ", window = \"address:" + fl.addr + "\" })")
+      }).then(function() {
+        return dispatch("hl.dsp.window.move({ x = " + fl.x + ", y = " + fl.y + ", window = \"address:" + fl.addr + "\" })")
+      })
+    }).then(function() {
+      return hyprJson(["activewindow", "-j"])
+    }).then(function(active) {
+      st.focused = active && active.address ? active.address : ""
+      return option("dwindle:split_width_multiplier")
+    }).then(function(m) {
+      st.multiplier = m
+      return option("dwindle:force_split")
+    }).then(function(f) {
+      st.force = f
+      return each(workspaces, function(ws) {
+        return arrangeWorkspace(ws, tiled, st).then(function(off) { allOff = allOff.concat(off) })
+      })
+    }).then(function() {
+      return refocus(st.focused)
+    }).then(function() { return allOff })
   }
 
   // ---- Watching -------------------------------------------------------------------------
@@ -583,17 +669,17 @@ Item {
   // The restore runs once per Hyprland session: a shell restart or a plugin
   // reload must never relaunch the apps.
   function start() {
-    return co(function*() {
-      sessionEnv = readFile("/proc/" + Quickshell.processId + "/environ")
-      var cat = yield run(["cat", statePath])
+    sessionEnv = readFile("/proc/" + Quickshell.processId + "/environ")
+    return run(["cat", statePath]).then(function(cat) {
       if (cat.code === 0) { stateText = cat.out; stateKnown = true }
-      var first = (yield run(["sh", "-c", '[ -e "$1" ] && echo no || { : >"$1"; echo yes; }', "_", markerPath])).out.trim() === "yes"
-      if (first && settings.restoreOnStart) {
-        yield sleep(3000) // let the startup config finish, as the old post-boot hook did
-        yield restore()
-      }
+      return run(["sh", "-c", '[ -e "$1" ] && echo no || { : >"$1"; echo yes; }', "_", markerPath])
+    }).then(function(r) {
+      var first = r.out.trim() === "yes"
+      // let the startup config finish, as the old post-boot hook did
+      if (first && settings.restoreOnStart) return sleep(3000).then(function() { return restore() })
+    }).then(function() {
       watching = true
-      yield save()
+      return save()
     })
   }
 
