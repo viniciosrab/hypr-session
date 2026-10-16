@@ -1,58 +1,58 @@
 # hypr-session
 
-Plugin do Omarchy que salva sua sessão do Hyprland e a restaura depois de um reboot, sem nada piscar na tela.
+Omarchy plugin that saves your Hyprland session and restores it after a reboot, without anything flashing on screen.
 
-## O que volta
+## What comes back
 
-- Cada app no seu workspace, incluindo os especiais (como o scratchpad).
-- O layout exato: tamanho e divisão de cada janela, e as janelas flutuantes.
-- Terminais na mesma pasta, rodando o que rodavam: Claude Code, Codex e pi voltam na mesma conversa. Também reabrem herdr, nvim, vim, btop, htop, lazygit, lazydocker e yazi.
-- Chrome com as abas da última sessão, e web apps como web apps.
+- Every app on its workspace, special ones included (like the scratchpad).
+- The exact layout: each window's size and split, plus floating windows.
+- Terminals in the same folder, running what they ran: Claude Code, Codex and pi resume the same conversation; herdr, nvim, vim, btop, htop, lazygit, lazydocker and yazi reopen.
+- Chrome with the tabs of the last session, and web apps as web apps.
 
-## Instalação
+## Install
 
 ```sh
 omarchy plugin add https://github.com/viniciosrab/hypr-session.git --enable
-omarchy bar put vinicios.hypr-session --section right   # ícone na barra (opcional)
+omarchy bar put vinicios.hypr-session --section right   # bar icon (optional)
 ```
 
-Pronto. A partir daí a sessão é salva sozinha e volta no próximo boot.
+That's it. From then on the session saves itself and comes back on the next boot.
 
-Precisa do Hyprland 0.56 ou mais novo. O `sqlite3` só é necessário para retomar o Codex.
+Requires Hyprland 0.56 or newer. `sqlite3` is only needed to resume Codex.
 
-## Painel
+## Panel
 
-Clique no ícone da barra para ver quando a sessão foi salva e restaurada pela última vez, e para salvar ou restaurar na hora.
+Click the bar icon to see when the session was last saved and restored, and to save or restore right away.
 
-| Opção (todas ligadas por padrão) | Ao desligar |
+| Option (all on by default) | When off |
 |---|---|
-| Restaurar ao iniciar | Nada reabre no boot. A sessão continua sendo salva. |
-| Salvar automaticamente | A sessão salva fica congelada como está. |
-| Remontar layout | Os apps voltam no workspace certo, mas sem refazer o layout. |
-| Retomar agentes nos terminais | Claude, Codex e pi voltam na pasta, sem reabrir a conversa. |
+| Restaurar ao iniciar (restore on start) | Nothing reopens on boot. The session is still saved. |
+| Salvar automaticamente (save automatically) | The saved session stays frozen as it is. |
+| Remontar layout (rebuild layout) | Apps return to the right workspace, without redoing the layout. |
+| Retomar agentes nos terminais (resume agents) | Claude, Codex and pi return to their folder without reopening the conversation. |
 
-Em **Não salvar estes apps**, marque o que não deve ser salvo nem reaberto.
+Under **Não salvar estes apps** (don't save these apps), tick the apps that should not be saved or reopened.
 
-## Pelo terminal
+## From the terminal
 
 ```sh
 omarchy-shell hypr-session save | restore | status
 omarchy-shell hypr-session set autoSave false
-omarchy-shell hypr-session ignore <classe>      # ou unignore
+omarchy-shell hypr-session ignore <class>      # or unignore
 ```
 
-## Arquivos
+## Files
 
-- `~/.local/state/hypr-session.json`: a sessão salva
-- `~/.local/state/hypr-session.log`: o que foi salvo e restaurado, útil quando algo não volta certo
+- `~/.local/state/hypr-session.json`: the saved session
+- `~/.local/state/hypr-session.log`: what was saved and restored, useful when something doesn't come back right
 
-## Vindo da versão em script
+## Coming from the script version
 
-Apague `~/.local/bin/hypr-session` e `~/.config/omarchy/hooks/post-boot.d/restore-session` antes de instalar, senão a sessão é restaurada duas vezes. A sessão já salva continua valendo.
+Delete `~/.local/bin/hypr-session` and `~/.config/omarchy/hooks/post-boot.d/restore-session` before installing, or the session is restored twice. Your saved session still works.
 
-## Limitações
+## Limitations
 
-- Um Codex ou pi aberto e nunca usado volta sem conversa.
-- Dois Codex na mesma pasta podem voltar na mesma conversa.
-- Só o layout dwindle é remontado.
-- Se o shell reiniciar no meio de uma restauração, ela não recomeça sozinha. Use **Restaurar agora**.
+- A Codex or pi that was opened but never used comes back without a conversation.
+- Two Codex instances in the same folder may come back in the same conversation.
+- Only the dwindle layout is rebuilt.
+- If the shell restarts in the middle of a restore, it doesn't start over on its own. Use **Restaurar agora** (restore now).
