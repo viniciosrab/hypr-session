@@ -49,6 +49,8 @@ test("program classification: agents resume, plain TUIs restart, shells are igno
   assert.deepEqual(M.classifyProgram("claude", "/p", "abc", [], false), { cwd: "/p", command: null }, "agents off keeps only the folder")
   assert.deepEqual(M.classifyProgram("nvim", "/p", "", ["nvim", "my file.txt"], false), { cwd: "/p", command: "nvim 'my file.txt'" })
   assert.equal(M.classifyProgram("zsh", "/p", "", ["zsh"], true), null)
+  assert.deepEqual(M.classifyProgram("herdr", "/p", "", ["herdr"], true), { cwd: "/p", command: null },
+    "herdr is not reopened: its folder comes back with a plain shell, and its own agents are not resumed")
 })
 
 test("targets: one per pid and class, in workspace/position order, ignoring listed classes", () => {

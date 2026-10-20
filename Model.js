@@ -8,7 +8,10 @@
 
 var TERMINALS = ["foot", "Alacritty", "com.mitchellh.ghostty", "kitty"]
 var BROWSERS = ["google-chrome", "chromium", "Chromium", "brave-browser"]
-var PLAIN_PROGRAMS = ["herdr", "nvim", "vim", "btop", "htop", "lazygit", "lazydocker", "yazi"]
+var PLAIN_PROGRAMS = ["nvim", "vim", "btop", "htop", "lazygit", "lazydocker", "yazi"]
+// Programs whose terminal comes back as a plain shell in their folder: not
+// relaunched, and the agents running inside them are not resumed either.
+var SHELL_ONLY = ["herdr"]
 var LAYOUT_TOLERANCE = 6
 var OFF_TOLERANCE = 12
 
@@ -125,6 +128,7 @@ function classifyProgram(name, cwd, id, cmdlineArgs, resumeAgents) {
   else if (name === "codex") agent = "codex" + (id ? " resume " + id : "")
   else if (name === "pi") agent = "pi" + (id ? " --session " + id : "")
   if (agent !== null) return { cwd: cwd, command: resumeAgents ? agent : null }
+  if (SHELL_ONLY.indexOf(name) !== -1) return { cwd: cwd, command: null }
   if (PLAIN_PROGRAMS.indexOf(name) !== -1) {
     return { cwd: cwd, command: cmdlineArgs.map(shQuote).join(" ") }
   }

@@ -6,7 +6,7 @@ Omarchy plugin that saves your Hyprland session and restores it after a reboot, 
 
 - Every app on its workspace, special ones included (like the scratchpad).
 - The exact layout: each window's size and split, plus floating windows.
-- Terminals in the same folder, running what they ran: Claude Code, Codex and pi resume the same conversation; herdr, nvim, vim, btop, htop, lazygit, lazydocker and yazi reopen.
+- Terminals in the same folder, running what they ran: Claude Code, Codex and pi resume the same conversation; nvim, vim, btop, htop, lazygit, lazydocker and yazi reopen. A terminal running herdr comes back as a plain shell in its folder.
 - Chrome with the tabs of the last session, and web apps as web apps.
 
 ## Install
