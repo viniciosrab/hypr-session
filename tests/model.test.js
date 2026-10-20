@@ -255,3 +255,13 @@ test("the bar icon is the anchor in every state", () => {
   assert.equal(M.restoreProblem({ placed: 2, expected: 2, off: 0 }), false)
   assert.equal(M.restoreProblem(null), false)
 })
+
+test("agent session lookup: Codex and pi search since the process started, never without that time", () => {
+  assert.deepEqual(M.sessionLookup("codex", "/p/it's", 1700, "/h"), ["sqlite3", "-readonly", "/h/.codex/state_5.sqlite",
+    "select id from threads where cwd = '/p/it''s' and updated_at >= 1700 order by updated_at desc limit 1"])
+  assert.deepEqual(M.sessionLookup("pi", "/home/u/proj", 1700, "/h"), ["find", "/h/.pi/agent/sessions/--home-u-proj--",
+    "-name", "*.jsonl", "-newermt", "@1700", "-printf", "%T@ %f\\n"])
+  assert.equal(M.sessionLookup("codex", "/p", 0, "/h"), null, "unknown start: no resume rather than another session's")
+  assert.equal(M.sessionLookup("pi", "/p", 0, "/h"), null)
+  assert.equal(M.sessionLookup("nvim", "/p", 1700, "/h"), null)
+})

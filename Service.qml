@@ -251,23 +251,15 @@ Item {
       try { return Promise.resolve(JSON.parse(readFile(home + "/.claude/sessions/" + pid + ".json")).sessionId || "") }
       catch (e) { return Promise.resolve("") }
     }
-    if (name === "codex") {
-      // Codex logs threads under a shared daemon: the thread last active in
-      // this directory since this codex started
-      var sql = "select id from threads where cwd = '" + cwd.replace(/'/g, "''") + "' and updated_at >= " + procStart(pid)
-        + " order by updated_at desc limit 1"
-      return run(["sqlite3", "-readonly", home + "/.codex/state_5.sqlite", sql]).then(function(r) { return r.out.trim() })
-    }
-    if (name === "pi") {
-      // pi keeps one file per session in a folder named after the directory
-      var dir = home + "/.pi/agent/sessions/--" + cwd.replace(/^\//, "").replace(/\//g, "-") + "--"
-      return run(["find", dir, "-name", "*.jsonl", "-newermt", "@" + procStart(pid), "-printf", "%T@ %f\\n"]).then(function(r) {
-        var newest = r.out.split("\n").filter(function(l) { return l }).sort(function(a, b) { return parseFloat(b) - parseFloat(a) })[0] || ""
-        var m = /_([0-9a-f-]+)\.jsonl$/.exec(newest)
-        return m ? m[1] : ""
-      })
-    }
-    return Promise.resolve("")
+    if (name !== "codex" && name !== "pi") return Promise.resolve("")
+    var lookup = Model.sessionLookup(name, cwd, procStart(pid), home)
+    if (!lookup) return Promise.resolve("")
+    return run(lookup).then(function(r) {
+      if (name === "codex") return r.out.trim()
+      var newest = r.out.split("\n").filter(function(l) { return l }).sort(function(a, b) { return parseFloat(b) - parseFloat(a) })[0] || ""
+      var m = /_([0-9a-f-]+)\.jsonl$/.exec(newest)
+      return m ? m[1] : ""
+    })
   }
 
   // The program running inside terminal `pid`: { cwd, command } or null.
