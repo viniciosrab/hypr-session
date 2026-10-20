@@ -56,6 +56,9 @@ Item {
   property bool ending: false
   property int logWrites: 0
   property string sessionEnv: ""
+  // Per class, the entry last saved with its pid and raw cmdline, to keep
+  // apps that closed their window but still run (see Model.keepRunning)
+  property var remembered: ({})
 
   // ---- Plumbing: processes, timers, files -----------------------------------------
 
@@ -352,6 +355,7 @@ Item {
     var terminalPids = targets.filter(function(t) { return Model.TERMINALS.indexOf(t.class) !== -1 }).map(function(t) { return t.pid })
     var ctx = { table: { children: {}, name: {} }, cwdOf: {}, launcherUrls: null }
     var entries = []
+    var fresh = {}
     return (terminalPids.length ? processTable() : Promise.resolve(ctx.table)).then(function(table) {
       ctx.table = table
       var pids = []
@@ -367,9 +371,25 @@ Item {
     }).then(function(cwdOf) {
       ctx.cwdOf = cwdOf
       return each(targets, function(t) {
-        return entryFor(t, clients, ctx).then(function(entry) { if (entry) entries.push(entry) })
+        return entryFor(t, clients, ctx).then(function(entry) {
+          if (!entry) return
+          entries.push(entry)
+          if (!(t.class in fresh)) fresh[t.class] = { entry: entry, pid: t.pid, cmdline: readFile("/proc/" + t.pid + "/cmdline") }
+        })
       })
-    }).then(function() { return entries })
+    }).then(function() {
+      var alive = {}
+      Object.keys(remembered).forEach(function(cls) {
+        var pid = remembered[cls].pid
+        if (!(cls in fresh) && !(pid in alive)) alive[pid] = readFile("/proc/" + pid + "/cmdline")
+      })
+      var kept = Model.keepRunning(remembered, entries, clients, settings, alive)
+      Object.keys(remembered).forEach(function(cls) {
+        if (!(cls in fresh) && kept.indexOf(remembered[cls].entry) !== -1) fresh[cls] = remembered[cls]
+      })
+      remembered = fresh
+      return entries.concat(kept)
+    })
   }
 
   function writeState(entries) {

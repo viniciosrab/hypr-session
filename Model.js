@@ -214,6 +214,25 @@ function buildEntry(o) {
   return entry
 }
 
+// Entries to carry over from the previous save: apps that closed their window
+// but keep running (tray apps). `remembered`: { class: {entry, pid, cmdline} };
+// `alive`: { pid: raw cmdline } read by the service. The cmdline must match
+// (the pid may have been reused), no window may be left on that pid (a web
+// app closed inside a browser that still has windows), and never terminals.
+function keepRunning(remembered, entries, clients, settings, alive) {
+  var present = {}
+  entries.forEach(function(e) { present[e.class] = true })
+  var kept = []
+  Object.keys(remembered).forEach(function(cls) {
+    var r = remembered[cls]
+    if (present[cls] || TERMINALS.indexOf(cls) !== -1 || isIgnored(settings, cls)) return
+    if (!r.cmdline || alive[r.pid] !== r.cmdline) return
+    if (clients.some(function(c) { return c.pid === r.pid })) return
+    kept.push(r.entry)
+  })
+  return kept
+}
+
 function serializeEntries(entries) { return JSON.stringify(entries, null, 2) + "\n" }
 
 function summary(entries) {
@@ -484,7 +503,7 @@ if (typeof module !== "undefined" && module.exports) {
     isIgnored: isIgnored, withIgnored: withIgnored, shQuote: shQuote, regexEscape: regexEscape,
     isWebAppClass: isWebAppClass, webAppKey: webAppKey, launcherUrl: launcherUrl, webAppUrl: webAppUrl,
     parseCmdline: parseCmdline, envDiff: envDiff, classifyProgram: classifyProgram, agentName: agentName, sessionLookup: sessionLookup,
-    targets: targets, windowsOf: windowsOf, buildEntry: buildEntry, serializeEntries: serializeEntries, summary: summary,
+    targets: targets, keepRunning: keepRunning, windowsOf: windowsOf, buildEntry: buildEntry, serializeEntries: serializeEntries, summary: summary,
     restorable: restorable, alreadyOpen: alreadyOpen, launchCommand: launchCommand, ruleSpecs: ruleSpecs, rulesLua: rulesLua, launchLua: launchLua,
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
     parseDesktopIndex: parseDesktopIndex, appNames: appNames, appName: appName,

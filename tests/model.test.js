@@ -265,3 +265,24 @@ test("agent session lookup: Codex and pi search since the process started, never
   assert.equal(M.sessionLookup("pi", "/p", 0, "/h"), null)
   assert.equal(M.sessionLookup("nvim", "/p", 1700, "/h"), null)
 })
+
+test("an app that closed its window but keeps running stays in the session", () => {
+  const entry = { cmd: ["discord"], class: "discord", workspaces: ["3"], geometry: [] }
+  const remembered = { discord: { entry, pid: 50, cmdline: "discord\0" } }
+  const settings = M.defaultSettings()
+  const other = [win("0x1", 7, "fakeapp", 1, 0, 0, 10, 10)]
+  const alive = { 50: "discord\0" }
+  assert.deepEqual(M.keepRunning(remembered, [], other, settings, alive), [entry], "alive, no windows: kept")
+  assert.deepEqual(M.keepRunning(remembered, [], other, settings, {}), [], "process gone: dropped")
+  assert.deepEqual(M.keepRunning(remembered, [], other, settings, { 50: "other\0" }), [], "pid reused by another program: dropped")
+  assert.deepEqual(M.keepRunning(remembered, [], [win("0x2", 50, "chrome-x-Default", 1, 0, 0, 10, 10)], settings, alive), [],
+    "the process still has another window (web app inside a browser): dropped")
+  assert.deepEqual(M.keepRunning(remembered, [{ class: "discord" }], other, settings, alive), [], "already in the new snapshot: not duplicated")
+  assert.deepEqual(M.keepRunning(remembered, [], other, M.withIgnored(settings, "discord", true), alive), [], "ignored: never kept")
+})
+
+test("a closed terminal is never kept, even when its process lives", () => {
+  const entry = { cmd: ["foot"], class: "foot", workspaces: ["1"], geometry: [] }
+  const remembered = { foot: { entry, pid: 60, cmdline: "foot\0" } }
+  assert.deepEqual(M.keepRunning(remembered, [], [], M.defaultSettings(), { 60: "foot\0" }), [])
+})
