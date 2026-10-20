@@ -477,10 +477,14 @@ Item {
       known = browser ? r.claimed.slice() : addresses(clients)
       return browser ? sleep(1000) : null
     }).then(function() {
+      // Wait first, look right before launching: a browser may reopen this
+      // window by itself while we wait
+      return waitCalm(cls)
+    }).then(function() {
       return hyprJson(["clients", "-j"])
     }).then(function(clients) {
       var already = (clients || []).some(function(c) { return c.class === cls && known.indexOf(c.address) === -1 })
-      if (!already) return waitCalm(cls).then(function() { return hypr(["dispatch", Model.launchLua(entry, entry.workspaces[0])]) })
+      if (!already) return hypr(["dispatch", Model.launchLua(entry, entry.workspaces[0])])
     }).then(function() {
       // Wait up to 20s for the app's windows
       var tick = 0
