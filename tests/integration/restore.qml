@@ -23,6 +23,8 @@ ShellRoot {
   Process { id: readCalls; command: ["cat", harness.fake + "/calls"]; stdout: StdioCollector { onStreamFinished: harness.callsText = text } }
   Process { id: readClients; command: ["cat", harness.fake + "/clients.json"]; stdout: StdioCollector { onStreamFinished: harness.clientsText = text } }
   Process { id: readRestored; command: ["cat", harness.home + "/.local/state/hypr-session.restored.json"]; stdout: StdioCollector { onStreamFinished: harness.restoredText = text } }
+  property string modeText: ""
+  Process { id: readMode; command: ["sh", "-c", 'stat -c %a "$1" "$2" 2>/dev/null | tr "\\n" " "', "_", harness.statePath, harness.home + "/.local/state/hypr-session.restored.json"]; stdout: StdioCollector { onStreamFinished: harness.modeText = text.trim() } }
   Process { id: readLog; command: ["cat", harness.logPath]; stdout: StdioCollector { onStreamFinished: harness.logText = text } }
 
   function clients() { try { return JSON.parse(clientsText) } catch (e) { return [] } }
@@ -59,6 +61,8 @@ ShellRoot {
         return harness.waited > 1000 && !harness.service.restoring && harness.callsText.split("exec_cmd").length === harness.launches
           && harness.logText.indexOf("restore: a already open, left alone") !== -1
       } },
+    { name: "the saved session and the restored copy are readable only by the user",
+      until: function() { return harness.modeText === "600 600" } },
     { name: "logs the restore",
       until: function() { return harness.logText.indexOf("restore: a 1/1 windows -> 3") !== -1 && harness.logText.indexOf("restore: 2 apps") !== -1 } }
   ]
@@ -102,6 +106,7 @@ ShellRoot {
       readClients.running = true
       readRestored.running = true
       readLog.running = true
+      readMode.running = true
       var step = harness.steps[harness.stepIndex]
       if (!harness.ran) { harness.ran = true; if (step.run) step.run() }
       harness.waited += interval

@@ -157,8 +157,10 @@ Item {
   }
 
   FileView { id: logWriter; path: root.logPath; atomicWrites: true; printErrors: false }
-  FileView { id: stateWriter; path: root.statePath; atomicWrites: true; printErrors: false }
-  FileView { id: restoredWriter; path: root.restoredPath; atomicWrites: true; printErrors: false }
+  // The session holds command lines and launch env: only the user reads it
+  function protect(paths) { return run(["chmod", "600"].concat(paths)) }
+  FileView { id: stateWriter; path: root.statePath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
+  FileView { id: restoredWriter; path: root.restoredPath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
   FileView { id: settingsWriter; path: root.settingsPath; atomicWrites: true; printErrors: false }
 
   // ---- Settings -----------------------------------------------------------------
@@ -710,6 +712,8 @@ Item {
     loadAppNames()
     // A restore cut short by a shell restart left its window rules on
     return rulesOff().then(function() {
+      return protect([statePath, restoredPath])
+    }).then(function() {
       return run(["cat", statePath])
     }).then(function(cat) {
       if (cat.code === 0) { stateText = cat.out; stateKnown = true }

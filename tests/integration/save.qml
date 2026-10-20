@@ -20,6 +20,8 @@ ShellRoot {
   property string logText: ""
   Process { id: readState; command: ["cat", harness.statePath]; stdout: StdioCollector { onStreamFinished: harness.stateText = text } }
   Process { id: readSettings; command: ["cat", harness.settingsPath]; stdout: StdioCollector { onStreamFinished: harness.settingsText = text } }
+  property string modeText: ""
+  Process { id: readMode; command: ["sh", "-c", 'stat -c %a "$1" 2>/dev/null', "_", harness.statePath]; stdout: StdioCollector { onStreamFinished: harness.modeText = text.trim() } }
   Process { id: readLog; command: ["cat", harness.logPath]; stdout: StdioCollector { onStreamFinished: harness.logText = text } }
 
   function state() { try { return JSON.parse(stateText) } catch (e) { return null } }
@@ -37,6 +39,8 @@ ShellRoot {
         return s && s.length === 1 && s[0].class === "fakeapp" && s[0].cmd.join(" ") === "sleep 600"
           && s[0].workspaces[0] === "2" && s[0].geometry[0].size[0] === 800
       } },
+    { name: "the saved session is readable only by the user",
+      until: function() { return harness.modeText === "600" } },
     { name: "an unchanged desktop is not rewritten",
       run: function() { harness.service.save() },
       until: function() { return harness.service.lastSaveAt > 0 && harness.waited > 1500 && harness.saves() === 1 } },
@@ -102,6 +106,7 @@ ShellRoot {
       readState.running = true
       readSettings.running = true
       readLog.running = true
+      readMode.running = true
       var step = harness.steps[harness.stepIndex]
       if (!harness.ran) { harness.ran = true; if (step.run) step.run() }
       harness.waited += interval

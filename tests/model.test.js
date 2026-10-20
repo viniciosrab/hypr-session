@@ -38,6 +38,7 @@ test("env diff keeps only the app's own variables and skips volatile ones", () =
   const session = "A=1\0B=2\0"
   const app = "A=1\0B=2\0QT_STYLE=kvantum\0PWD=/x\0ELECTRON_RUN=1\0NOEQ\0"
   assert.deepEqual(M.envDiff(session, app), { QT_STYLE: "kvantum" })
+  assert.deepEqual(M.envDiff("A=1\0", "A=1\0PATH=/old/bin\0"), {}, "PATH goes stale, the session's own is used")
 })
 
 test("program classification: agents resume, plain TUIs restart, shells are ignored", () => {
