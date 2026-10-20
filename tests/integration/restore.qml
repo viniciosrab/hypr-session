@@ -42,7 +42,7 @@ ShellRoot {
     { name: "window rules are set before the launch and switched off after",
       until: function() {
         var on = harness.callsText.indexOf("hypr-session-1")
-        var off = harness.callsText.indexOf("set_enabled(false)")
+        var off = harness.callsText.lastIndexOf("set_enabled(false)")
         var launch = harness.callsText.indexOf("exec_cmd")
         return on !== -1 && on < launch && launch < off
       } },

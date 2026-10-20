@@ -241,16 +241,19 @@ function ruleSpecs(entries) {
     .map(function(cls) { return { class: cls, workspace: byClass[cls][0] } })
 }
 
+var RULES_OFF_LUA = "for _, r in ipairs(_G.hypr_session_rules or {}) do r:set_enabled(false) end; _G.hypr_session_rules = {}"
+
+// Rules live in Hyprland, not in the shell: a restore cut short (shell
+// restart, crash) leaves them on, so every new set starts by switching
+// the old ones off.
 function rulesLua(specs) {
-  var lua = "_G.hypr_session_rules = {}"
+  var lua = RULES_OFF_LUA
   specs.forEach(function(s, i) {
     lua += "; table.insert(_G.hypr_session_rules, hl.window_rule({ name = \"hypr-session-" + (i + 1)
       + "\", match = { class = [==[^(" + regexEscape(s.class) + ")$]==] }, workspace = [==[" + s.workspace + " silent]==] }))"
   })
   return lua
 }
-
-var RULES_OFF_LUA = "for _, r in ipairs(_G.hypr_session_rules or {}) do r:set_enabled(false) end; _G.hypr_session_rules = {}"
 
 function launchLua(entry, workspace) {
   return "hl.dsp.exec_cmd([==[" + launchCommand(entry) + "]==], { workspace = \"" + workspace + " silent\" })"

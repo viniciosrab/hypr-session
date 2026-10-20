@@ -29,6 +29,8 @@ ShellRoot {
   readonly property var steps: [
     { name: "a restarted shell does not relaunch the apps, and starts watching",
       until: function() { return harness.service.watching && harness.waited > 4500 && harness.callsText.indexOf("exec_cmd") === -1 && harness.service.lastRestoreAt === 0 } },
+    { name: "switches off window rules an interrupted restore left on",
+      until: function() { return harness.callsText.indexOf("set_enabled(false)") !== -1 } },
     { name: "still saves the session",
       until: function() { return harness.logText.indexOf("save: fakeapp@2") !== -1 } }
   ]

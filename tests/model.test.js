@@ -115,6 +115,7 @@ test("window rules: only classes that sat on a single workspace get one", () => 
   const lua = M.rulesLua([{ class: "chrome-a.b-Default", workspace: "special:x" }])
   assert.match(lua, /class = \[==\[\^\(chrome-a\\\.b-Default\)\$\]==\]/)
   assert.match(lua, /workspace = \[==\[special:x silent\]==\]/)
+  assert.ok(lua.startsWith(M.RULES_OFF_LUA + "; "), "rules left by an interrupted restore are switched off first")
 })
 
 test("restorable drops ignored and empty entries", () => {

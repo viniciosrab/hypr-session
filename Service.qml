@@ -708,7 +708,10 @@ Item {
   function start() {
     sessionEnv = readFile("/proc/" + Quickshell.processId + "/environ")
     loadAppNames()
-    return run(["cat", statePath]).then(function(cat) {
+    // A restore cut short by a shell restart left its window rules on
+    return rulesOff().then(function() {
+      return run(["cat", statePath])
+    }).then(function(cat) {
       if (cat.code === 0) { stateText = cat.out; stateKnown = true }
       return run(["sh", "-c", '[ -e "$1" ] && echo no || { : >"$1"; echo yes; }', "_", markerPath])
     }).then(function(r) {
