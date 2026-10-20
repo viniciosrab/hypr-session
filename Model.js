@@ -496,6 +496,38 @@ function restoreProblem(r) { return !!r && r.expected > 0 && (r.placed < r.expec
 
 function sessionIcon(state) { return ICON_SESSION }
 
+// ---- Calm before a launch ---------------------------------------------------
+
+// Cumulative "some" stall time (microseconds) from the cpu, io and memory PSI
+// texts, in that order; null for a missing or unreadable file.
+function pressureTotals(texts) {
+  var names = ["cpu", "io", "memory"]
+  var out = {}
+  names.forEach(function(name, i) {
+    var m = /^some .*\btotal=(\d+)/m.exec(texts[i] || "")
+    out[name] = m ? Number(m[1]) : null
+  })
+  return out
+}
+
+// The stalled fraction of each resource between two samples `ms` apart.
+function pressureLoad(before, after, ms) {
+  var out = {}
+  ;["cpu", "io", "memory"].forEach(function(name) {
+    var a = before[name]
+    var b = after[name]
+    out[name] = a === null || b === null || !(ms > 0) ? null : (b - a) / (ms * 1000)
+  })
+  return out
+}
+
+var CALM_LIMITS = { cpu: 0.30, io: 0.20, memory: 0.10 }
+
+// Calm when every measured resource is below its limit (missing counts as calm).
+function calm(load) {
+  return Object.keys(CALM_LIMITS).every(function(name) { return load[name] === null || load[name] < CALM_LIMITS[name] })
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     TERMINALS: TERMINALS, BROWSERS: BROWSERS, RULES_OFF_LUA: RULES_OFF_LUA,
@@ -508,6 +540,7 @@ if (typeof module !== "undefined" && module.exports) {
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
     parseDesktopIndex: parseDesktopIndex, appNames: appNames, appName: appName,
     relativeTime: relativeTime, sessionIcon: sessionIcon, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
-    shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay
+    shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay,
+    pressureTotals: pressureTotals, pressureLoad: pressureLoad, calm: calm
   }
 }

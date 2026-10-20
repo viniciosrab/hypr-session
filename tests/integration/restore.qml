@@ -31,12 +31,29 @@ ShellRoot {
   function wsOf(cls) { var c = clients().filter(function(x) { return x.class === cls })[0]; return c ? c.workspace.name : null }
   function called(text) { return callsText.indexOf(text) !== -1 }
 
+  readonly property string pressureDir: Quickshell.env("HYPR_SESSION_PRESSURE")
+  property real busyTotal: 1000000
+  property bool busy: false
+  property bool early: false
+
   property var service: null
   property int stepIndex: -1
   property int waited: 0
   property bool ran: false
 
   readonly property var steps: [
+    { name: "waits for a calm system before launching an app, then launches",
+      run: function() { harness.busy = true },
+      until: function() {
+        var execs = harness.callsText.split("exec_cmd").length - 1
+        if (harness.busy) {
+          if (execs > 0) harness.early = true
+          if (harness.waited > 5500) harness.busy = false
+          return false
+        }
+        return !harness.early && execs > 0 && harness.logText.indexOf("waited") !== -1
+          && harness.logText.indexOf("for the system to calm down before a") !== -1
+      } },
     { name: "relaunches saved apps and sends each window to its workspace",
       until: function() { return harness.service.lastRestoreAt > 0 && harness.wsOf("a") === "3" && harness.wsOf("f") === "5" } },
     { name: "an ignored app is not relaunched",
@@ -87,6 +104,16 @@ ShellRoot {
     }
   }
 
+
+  // Keeps the cpu pressure fully stalled (+1s of stall every 200ms) while busy
+  Process {
+    id: busyWriter
+    command: ["sh", "-c", 'printf "some avg10=0.00 avg60=0.00 avg300=0.00 total=%s\\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\\n" "$1" >"$2/cpu"', "_", String(harness.busyTotal), harness.pressureDir]
+  }
+  Timer {
+    interval: 200; repeat: true; running: harness.busy
+    onTriggered: { harness.busyTotal += 1000000; busyWriter.running = true }
+  }
 
   Component { id: serviceComponent; Plugin.Service {} }
 

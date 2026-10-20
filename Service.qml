@@ -433,6 +433,31 @@ Item {
     return hypr(["dispatch", "hl.dsp.window.move({ workspace = \"" + ws + "\", follow = false, window = \"address:" + addr + "\" })"])
   }
 
+  readonly property string pressureDir: Quickshell.env("HYPR_SESSION_PRESSURE") || "/proc/pressure"
+
+  function pressureSample() {
+    return Model.pressureTotals(["cpu", "io", "memory"].map(function(name) { return readFile(pressureDir + "/" + name) }))
+  }
+
+  // Waits until the system is calm (cpu, io and memory pressure low), at most
+  // 10s, so heavy apps don't pile onto each other at boot.
+  function waitCalm(cls) {
+    var samples = 0
+    var isCalm = false
+    return loop(function() {
+      if (isCalm || samples >= 20) return false
+      samples++
+      var before = pressureSample()
+      var start = Date.now()
+      return sleep(500).then(function() {
+        isCalm = Model.calm(Model.pressureLoad(before, pressureSample(), Date.now() - start))
+        return true
+      })
+    }).then(function() {
+      if (samples > 1) log("restore: waited " + Math.round(samples / 2) + "s for the system to calm down before " + cls)
+    })
+  }
+
   function rulesOff() { return hypr(["eval", Model.RULES_OFF_LUA]) }
 
   // Launches one saved app (unless its windows are open already) and sends
@@ -455,7 +480,7 @@ Item {
       return hyprJson(["clients", "-j"])
     }).then(function(clients) {
       var already = (clients || []).some(function(c) { return c.class === cls && known.indexOf(c.address) === -1 })
-      if (!already) return hypr(["dispatch", Model.launchLua(entry, entry.workspaces[0])])
+      if (!already) return waitCalm(cls).then(function() { return hypr(["dispatch", Model.launchLua(entry, entry.workspaces[0])]) })
     }).then(function() {
       // Wait up to 20s for the app's windows
       var tick = 0

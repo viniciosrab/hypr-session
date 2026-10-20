@@ -18,6 +18,8 @@ omarchy bar put vinicios.hypr-session --section right   # bar icon (optional)
 
 That's it. From then on the session saves itself and comes back on the next boot.
 
+The restore waits for the PC to settle between apps (10s at most each), so a boot with heavy apps doesn't freeze it.
+
 Requires Hyprland 0.56 or newer. `sqlite3` is only needed to resume Codex.
 
 ## Panel

@@ -286,3 +286,23 @@ test("a closed terminal is never kept, even when its process lives", () => {
   const remembered = { foot: { entry, pid: 60, cmdline: "foot\0" } }
   assert.deepEqual(M.keepRunning(remembered, [], [], M.defaultSettings(), { 60: "foot\0" }), [])
 })
+
+test("pressureTotals reads the some total of each PSI file and tolerates missing ones", () => {
+  const psi = "some avg10=0.00 avg60=0.00 avg300=0.00 total=114050548\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=999\n"
+  assert.deepEqual(M.pressureTotals([psi, "", null]), { cpu: 114050548, io: null, memory: null })
+  assert.deepEqual(M.pressureTotals(["junk", psi, psi]), { cpu: null, io: 114050548, memory: 114050548 })
+})
+
+test("pressureLoad is the stalled fraction between two samples", () => {
+  const load = M.pressureLoad({ cpu: 1000, io: 0, memory: null }, { cpu: 251000, io: 100000, memory: 5 }, 500)
+  assert.deepEqual(load, { cpu: 0.5, io: 0.2, memory: null })
+  assert.equal(M.pressureLoad({ cpu: 5, io: 0, memory: 0 }, { cpu: 5, io: 0, memory: 0 }, 0).cpu, null)
+})
+
+test("calm needs cpu < 0.30, io < 0.20 and memory < 0.10; a missing file is calm", () => {
+  assert.equal(M.calm({ cpu: 0.29, io: 0.19, memory: 0.09 }), true)
+  assert.equal(M.calm({ cpu: 0.30, io: 0, memory: 0 }), false)
+  assert.equal(M.calm({ cpu: 0, io: 0.20, memory: 0 }), false)
+  assert.equal(M.calm({ cpu: 0, io: 0, memory: 0.10 }), false)
+  assert.equal(M.calm({ cpu: null, io: null, memory: null }), true)
+})

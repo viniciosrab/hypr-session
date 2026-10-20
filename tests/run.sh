@@ -33,9 +33,13 @@ for test in "$source_root"/tests/integration/${ONLY:-*}.qml; do
   cp -- "$omarchy_shell/services/PluginShellApi.qml" "$work/app/host/"
   cp -- "$test" "$work/app/shell.qml"
   echo '[]' >"$work/fake/clients.json"
+  mkdir -p "$work/pressure"
+  for res in cpu io memory; do
+    printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1000\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1000\n' >"$work/pressure/$res"
+  done
 
   env -u HYPR_SESSION_FILE QS_DISABLE_CRASH_HANDLER=1 XDG_STATE_HOME="$work/home/.local/state" HOME="$work/home" PATH="$source_root/tests/bin:$PATH" FAKE_HYPR="$work/fake" FAKE_PID="$sleeper" \
-    HYPR_SESSION_MARKER="$work/marker" timeout 90s qs --no-color -p "$work/app" >"$work/output" 2>&1 || true
+    HYPR_SESSION_MARKER="$work/marker" HYPR_SESSION_PRESSURE="$work/pressure" timeout 90s qs --no-color -p "$work/app" >"$work/output" 2>&1 || true
 
   if grep -q SESSION_PASS "$work/output" \
     && ! grep -E 'ReferenceError|TypeError|Cannot assign|Unable to assign|is not a type|Cannot read property|Binding loop' "$work/output"; then
