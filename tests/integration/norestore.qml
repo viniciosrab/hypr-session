@@ -32,18 +32,24 @@ ShellRoot {
     { name: "switches off window rules an interrupted restore left on",
       until: function() { return harness.callsText.indexOf("set_enabled(false)") !== -1 } },
     { name: "still saves the session",
-      until: function() { return harness.logText.indexOf("save: fakeapp@2") !== -1 } }
+      until: function() { return harness.logText.indexOf("save: fakeapp@2") !== -1 } },
+    { name: "a log past 1000 lines loses its oldest 500 at start, and keeps what is written after",
+      until: function() {
+        var lines = harness.logText.split("\n")
+        return lines[0] === "old 500" && harness.logText.indexOf("old 499\n") === -1
+          && lines.filter(function(l) { return l.indexOf("old ") === 0 }).length === 600 && harness.logText.indexOf("save: fakeapp@2") !== -1
+      } }
   ]
 
   Process {
     id: fixture
     running: true
-    command: ["sh", "-c", 'printf "%s" "$1" >"$2/clients.json" && printf "%s" "$3" >"$4" && : >"$5"',
+    command: ["sh", "-c", 'printf "%s" "$1" >"$2/clients.json" && printf "%s" "$3" >"$4" && : >"$5" && seq -f "old %g" 0 1099 >"$6"',
       "_",
       JSON.stringify([{ address: "0x1", class: "fakeapp", pid: Number(harness.pid), workspace: { id: 2, name: "2" }, at: [0, 0], size: [800, 600], floating: false }]),
       harness.fake,
       JSON.stringify([{ cmd: ["fakeapp-a"], class: "a", workspaces: ["3"], geometry: [] }]),
-      harness.home + "/.local/state/hypr-session.json", Quickshell.env("HYPR_SESSION_MARKER")]
+      harness.home + "/.local/state/hypr-session.json", Quickshell.env("HYPR_SESSION_MARKER"), harness.home + "/.local/state/hypr-session.log"]
     onExited: function(code) {
       if (code !== 0) return harness.finish("could not write fixtures")
       harness.service = serviceComponent.createObject(harness)

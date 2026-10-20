@@ -178,11 +178,7 @@ test("shutdown detection: uwsm stop, systemd stopping, or a queued poweroff/rebo
   assert.equal(M.shuttingDown({ uwsmStop: false, systemState: "running", timerExecStarts: ["something else"] }), false)
 })
 
-test("log trimming and line format", () => {
-  assert.equal(M.trimLog("a\nb\n"), null)
-  const long = Array.from({ length: 1001 }, (_, i) => "l" + i).join("\n") + "\n"
-  const trimmed = M.trimLog(long)
-  assert.equal(trimmed.split("\n")[0], "l500")
+test("log line format", () => {
   assert.equal(M.logLine(new Date(2026, 0, 2, 3, 4, 5), "save: x"), "2026-01-02 03:04:05 save: x\n")
 })
 

@@ -381,13 +381,6 @@ function shuttingDown(facts) {
 
 // ---- Log --------------------------------------------------------------------
 
-// Past 1000 lines the oldest 500 go. Returns the new text, or null when fine.
-function trimLog(text) {
-  var lines = String(text).split("\n")
-  if (lines[lines.length - 1] === "") lines.pop()
-  return lines.length > 1000 ? lines.slice(500).join("\n") + "\n" : null
-}
-
 function logLine(now, message) {
   function pad(n) { return (n < 10 ? "0" : "") + n }
   return now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate()) + " "
@@ -478,6 +471,6 @@ if (typeof module !== "undefined" && module.exports) {
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
     parseDesktopIndex: parseDesktopIndex, appNames: appNames, appName: appName,
     relativeTime: relativeTime, sessionIcon: sessionIcon, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
-    shuttingDown: shuttingDown, trimLog: trimLog, logLine: logLine, eventDelay: eventDelay
+    shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay
   }
 }

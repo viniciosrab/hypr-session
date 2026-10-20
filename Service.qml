@@ -145,18 +145,19 @@ Item {
     return hypr(["dispatch", lua]).then(function() { return sleep(150) })
   }
 
+  // Log writes run one at a time, in order: a trim never races an append.
+  property var logQueue: Promise.resolve()
+  function logStep(argv) {
+    logQueue = logQueue.then(function() { return run(argv) })
+  }
   function log(message) {
-    run(["sh", "-c", 'printf "%s" "$1" >>"$2"', "_", Model.logLine(new Date(), message), logPath])
+    logStep(["sh", "-c", 'printf "%s" "$1" >>"$2"', "_", Model.logLine(new Date(), message), logPath])
     if (++logWrites % 50 === 0) trimLog()
   }
+  // Past 1000 lines the oldest 500 go
   function trimLog() {
-    run(["cat", logPath]).then(function(r) {
-      var trimmed = Model.trimLog(r.out)
-      if (trimmed !== null) logWriter.setText(trimmed)
-    })
+    logStep(["sh", "-c", '[ "$(wc -l <"$1" 2>/dev/null || echo 0)" -gt 1000 ] || exit 0; tail -n +501 "$1" >"$1.tmp" && mv "$1.tmp" "$1"', "_", logPath])
   }
-
-  FileView { id: logWriter; path: root.logPath; atomicWrites: true; printErrors: false }
   // The session holds command lines and launch env: only the user reads it
   function protect(paths) { return run(["chmod", "600"].concat(paths)) }
   FileView { id: stateWriter; path: root.statePath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
@@ -709,6 +710,7 @@ Item {
   // reload must never relaunch the apps.
   function start() {
     sessionEnv = readFile("/proc/" + Quickshell.processId + "/environ")
+    trimLog()
     loadAppNames()
     // A restore cut short by a shell restart left its window rules on
     return rulesOff().then(function() {
