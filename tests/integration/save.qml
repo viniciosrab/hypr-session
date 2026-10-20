@@ -20,12 +20,27 @@ ShellRoot {
   property string logText: ""
   Process { id: readState; command: ["cat", harness.statePath]; stdout: StdioCollector { onStreamFinished: harness.stateText = text } }
   Process { id: readSettings; command: ["cat", harness.settingsPath]; stdout: StdioCollector { onStreamFinished: harness.settingsText = text } }
+  property string modeText: ""
+  Process { id: readMode; command: ["sh", "-c", 'stat -c %a "$1" 2>/dev/null', "_", harness.statePath]; stdout: StdioCollector { onStreamFinished: harness.modeText = text.trim() } }
+  // A tray-style app: a process of its own that outlives its window
+  Process { id: tray; command: ["sleep", "601"]; onExited: harness.service.save() }
+  // Rewrites the fake desktop, then saves
+  Process { id: desktop; onExited: { harness.wroteAt = Date.now(); harness.service.save() } }
+  function setDesktop(list) {
+    desktop.command = ["sh", "-c", 'printf "%s" "$1" >"$2/clients.json"', "_", JSON.stringify(list), fake]
+    desktop.running = true
+  }
+  function window(address, cls, pid) {
+    return { address: address, class: cls, pid: pid, workspace: { id: 2, name: "2" }, at: [10, 20], size: [800, 600], floating: false }
+  }
+  function has(cls) { var s = state(); return !!s && s.some(function(e) { return e.class === cls }) }
   Process { id: readLog; command: ["cat", harness.logPath]; stdout: StdioCollector { onStreamFinished: harness.logText = text } }
 
   function state() { try { return JSON.parse(stateText) } catch (e) { return null } }
   function saves() { return logText.split("\n").filter(function(l) { return l.indexOf("save:") !== -1 }).length }
 
   property var service: null
+  property real wroteAt: 0
   property int stepIndex: -1
   property int waited: 0
   property bool ran: false
@@ -37,11 +52,25 @@ ShellRoot {
         return s && s.length === 1 && s[0].class === "fakeapp" && s[0].cmd.join(" ") === "sleep 600"
           && s[0].workspaces[0] === "2" && s[0].geometry[0].size[0] === 800
       } },
+    { name: "the saved session is readable only by the user",
+      until: function() { return harness.modeText === "600" } },
     { name: "an unchanged desktop is not rewritten",
       run: function() { harness.service.save() },
       until: function() { return harness.service.lastSaveAt > 0 && harness.waited > 1500 && harness.saves() === 1 } },
     { name: "the panel can list the open apps",
       until: function() { return harness.service.openClasses.indexOf("fakeapp") !== -1 && harness.service.openClasses.indexOf("skipme") !== -1 } },
+    { name: "a tray app process is running",
+      run: function() { tray.running = true },
+      until: function() { return tray.processId > 0 } },
+    { name: "an app with a window is saved",
+      run: function() { harness.setDesktop([harness.window("0x1", "fakeapp", Number(harness.pid)), harness.window("0x3", "trayapp", tray.processId)]) },
+      until: function() { return harness.has("trayapp") && harness.has("fakeapp") } },
+    { name: "an app that closes its window but keeps running stays in the session",
+      run: function() { harness.setDesktop([harness.window("0x1", "fakeapp", Number(harness.pid))]) },
+      until: function() { return harness.service.lastSaveAt > harness.wroteAt && harness.waited > 1500 && harness.has("trayapp") && harness.has("fakeapp") } },
+    { name: "it drops out of the session once its process exits",
+      run: function() { tray.running = false },
+      until: function() { return harness.has("fakeapp") && !harness.has("trayapp") } },
     { name: "an ignored app is left out and the choice persists",
       run: function() { harness.service.setIgnored("skipme", true); harness.service.setSetting("autoSave", false) },
       until: function() {
@@ -102,6 +131,7 @@ ShellRoot {
       readState.running = true
       readSettings.running = true
       readLog.running = true
+      readMode.running = true
       var step = harness.steps[harness.stepIndex]
       if (!harness.ran) { harness.ran = true; if (step.run) step.run() }
       harness.waited += interval

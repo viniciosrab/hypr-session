@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -25,7 +26,7 @@ Panel {
   readonly property var prefs: service ? service.settings : Model.defaultSettings()
   readonly property var apps: service ? service.apps : []
   readonly property int savedCount: apps.filter(function(a) { return prefs.ignored.indexOf(a.class) === -1 }).length
-  readonly property color fg: bar ? bar.foreground : Color.foreground
+  readonly property color fg: bar ? bar.foreground : Commons.Color.foreground
   readonly property color dim: Qt.darker(fg, 1.4)
   readonly property string fontName: bar ? bar.fontFamily : Style.font.family
 
@@ -173,7 +174,7 @@ Panel {
           width: parent.width
           visible: root.restoreLine !== ""
           text: (root.restoreOk ? "󰄬 " : "󰀦 ") + root.restoreLine
-          color: root.restoreOk ? root.dim : Color.urgent
+          color: root.restoreOk ? root.dim : Commons.Color.urgent
           font.family: root.fontName
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight

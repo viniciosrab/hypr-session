@@ -12,8 +12,9 @@ var PLAIN_PROGRAMS = ["herdr", "nvim", "vim", "btop", "htop", "lazygit", "lazydo
 var LAYOUT_TOLERANCE = 6
 var OFF_TOLERANCE = 12
 
-// Variables that change on every login or belong to the launcher, not the app.
-var ENV_SKIP = /^(_|PWD|OLDPWD|SHLVL|INVOCATION_ID|JOURNAL_STREAM|SYSTEMD_EXEC_PID|MANAGERPID|MANAGERPIDFDID|DESKTOP_STARTUP_ID|XDG_ACTIVATION_TOKEN|HYPRLAND_INSTANCE_SIGNATURE|HYPRLAND_CMD|DBUS_SESSION_BUS_ADDRESS|XDG_SESSION_ID|XDG_VTNR|HL_EXEC_RULE_TOKEN|GIO_LAUNCHED_DESKTOP_FILE|GIO_LAUNCHED_DESKTOP_FILE_PID|CHROME_DESKTOP|CHROME_WRAPPER|ELECTRON_[A-Z_]*|VSCODE_[A-Z_]*|NODE_OPTIONS)=/
+// Variables that change on every login or belong to the launcher, not the
+// app. PATH too: a saved one goes stale, the session's own is the right one.
+var ENV_SKIP = /^(_|PATH|PWD|OLDPWD|SHLVL|INVOCATION_ID|JOURNAL_STREAM|SYSTEMD_EXEC_PID|MANAGERPID|MANAGERPIDFDID|DESKTOP_STARTUP_ID|XDG_ACTIVATION_TOKEN|HYPRLAND_INSTANCE_SIGNATURE|HYPRLAND_CMD|DBUS_SESSION_BUS_ADDRESS|XDG_SESSION_ID|XDG_VTNR|HL_EXEC_RULE_TOKEN|GIO_LAUNCHED_DESKTOP_FILE|GIO_LAUNCHED_DESKTOP_FILE_PID|CHROME_DESKTOP|CHROME_WRAPPER|ELECTRON_[A-Z_]*|VSCODE_[A-Z_]*|NODE_OPTIONS)=/
 
 // ---- Settings ---------------------------------------------------------------
 
@@ -130,6 +131,24 @@ function classifyProgram(name, cwd, id, cmdlineArgs, resumeAgents) {
   return null
 }
 
+// The command that finds the session a Codex or pi process is in: the one
+// last active in its directory since `since` (when the process started, in
+// seconds). null without a start time, so it never picks another session.
+function sessionLookup(name, cwd, since, home) {
+  if (!since) return null
+  if (name === "codex") {
+    // Codex logs threads under a shared daemon
+    return ["sqlite3", "-readonly", home + "/.codex/state_5.sqlite", "select id from threads where cwd = '"
+      + String(cwd).replace(/'/g, "''") + "' and updated_at >= " + since + " order by updated_at desc limit 1"]
+  }
+  if (name === "pi") {
+    // pi keeps one file per session in a folder named after the directory
+    var dir = home + "/.pi/agent/sessions/--" + String(cwd).replace(/^\//, "").replace(/\//g, "-") + "--"
+    return ["find", dir, "-name", "*.jsonl", "-newermt", "@" + since, "-printf", "%T@ %f\\n"]
+  }
+  return null
+}
+
 function agentName(name) { return name === "claude" || name === "codex" || name === "pi" }
 
 // ---- Snapshot ---------------------------------------------------------------
@@ -195,6 +214,25 @@ function buildEntry(o) {
   return entry
 }
 
+// Entries to carry over from the previous save: apps that closed their window
+// but keep running (tray apps). `remembered`: { class: {entry, pid, cmdline} };
+// `alive`: { pid: raw cmdline } read by the service. The cmdline must match
+// (the pid may have been reused), no window may be left on that pid (a web
+// app closed inside a browser that still has windows), and never terminals.
+function keepRunning(remembered, entries, clients, settings, alive) {
+  var present = {}
+  entries.forEach(function(e) { present[e.class] = true })
+  var kept = []
+  Object.keys(remembered).forEach(function(cls) {
+    var r = remembered[cls]
+    if (present[cls] || TERMINALS.indexOf(cls) !== -1 || isIgnored(settings, cls)) return
+    if (!r.cmdline || alive[r.pid] !== r.cmdline) return
+    if (clients.some(function(c) { return c.pid === r.pid })) return
+    kept.push(r.entry)
+  })
+  return kept
+}
+
 function serializeEntries(entries) { return JSON.stringify(entries, null, 2) + "\n" }
 
 function summary(entries) {
@@ -241,16 +279,19 @@ function ruleSpecs(entries) {
     .map(function(cls) { return { class: cls, workspace: byClass[cls][0] } })
 }
 
+var RULES_OFF_LUA = "for _, r in ipairs(_G.hypr_session_rules or {}) do r:set_enabled(false) end; _G.hypr_session_rules = {}"
+
+// Rules live in Hyprland, not in the shell: a restore cut short (shell
+// restart, crash) leaves them on, so every new set starts by switching
+// the old ones off.
 function rulesLua(specs) {
-  var lua = "_G.hypr_session_rules = {}"
+  var lua = RULES_OFF_LUA
   specs.forEach(function(s, i) {
     lua += "; table.insert(_G.hypr_session_rules, hl.window_rule({ name = \"hypr-session-" + (i + 1)
       + "\", match = { class = [==[^(" + regexEscape(s.class) + ")$]==] }, workspace = [==[" + s.workspace + " silent]==] }))"
   })
   return lua
 }
-
-var RULES_OFF_LUA = "for _, r in ipairs(_G.hypr_session_rules or {}) do r:set_enabled(false) end; _G.hypr_session_rules = {}"
 
 function launchLua(entry, workspace) {
   return "hl.dsp.exec_cmd([==[" + launchCommand(entry) + "]==], { workspace = \"" + workspace + " silent\" })"
@@ -377,13 +418,6 @@ function shuttingDown(facts) {
 
 // ---- Log --------------------------------------------------------------------
 
-// Past 1000 lines the oldest 500 go. Returns the new text, or null when fine.
-function trimLog(text) {
-  var lines = String(text).split("\n")
-  if (lines[lines.length - 1] === "") lines.pop()
-  return lines.length > 1000 ? lines.slice(500).join("\n") + "\n" : null
-}
-
 function logLine(now, message) {
   function pad(n) { return (n < 10 ? "0" : "") + n }
   return now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate()) + " "
@@ -462,18 +496,51 @@ function restoreProblem(r) { return !!r && r.expected > 0 && (r.placed < r.expec
 
 function sessionIcon(state) { return ICON_SESSION }
 
+// ---- Calm before a launch ---------------------------------------------------
+
+// Cumulative "some" stall time (microseconds) from the cpu, io and memory PSI
+// texts, in that order; null for a missing or unreadable file.
+function pressureTotals(texts) {
+  var names = ["cpu", "io", "memory"]
+  var out = {}
+  names.forEach(function(name, i) {
+    var m = /^some .*\btotal=(\d+)/m.exec(texts[i] || "")
+    out[name] = m ? Number(m[1]) : null
+  })
+  return out
+}
+
+// The stalled fraction of each resource between two samples `ms` apart.
+function pressureLoad(before, after, ms) {
+  var out = {}
+  ;["cpu", "io", "memory"].forEach(function(name) {
+    var a = before[name]
+    var b = after[name]
+    out[name] = a === null || b === null || !(ms > 0) ? null : (b - a) / (ms * 1000)
+  })
+  return out
+}
+
+var CALM_LIMITS = { cpu: 0.30, io: 0.20, memory: 0.10 }
+
+// Calm when every measured resource is below its limit (missing counts as calm).
+function calm(load) {
+  return Object.keys(CALM_LIMITS).every(function(name) { return load[name] === null || load[name] < CALM_LIMITS[name] })
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     TERMINALS: TERMINALS, BROWSERS: BROWSERS, RULES_OFF_LUA: RULES_OFF_LUA,
     defaultSettings: defaultSettings, parseSettings: parseSettings, serializeSettings: serializeSettings,
     isIgnored: isIgnored, withIgnored: withIgnored, shQuote: shQuote, regexEscape: regexEscape,
     isWebAppClass: isWebAppClass, webAppKey: webAppKey, launcherUrl: launcherUrl, webAppUrl: webAppUrl,
-    parseCmdline: parseCmdline, envDiff: envDiff, classifyProgram: classifyProgram, agentName: agentName,
-    targets: targets, windowsOf: windowsOf, buildEntry: buildEntry, serializeEntries: serializeEntries, summary: summary,
+    parseCmdline: parseCmdline, envDiff: envDiff, classifyProgram: classifyProgram, agentName: agentName, sessionLookup: sessionLookup,
+    targets: targets, keepRunning: keepRunning, windowsOf: windowsOf, buildEntry: buildEntry, serializeEntries: serializeEntries, summary: summary,
     restorable: restorable, alreadyOpen: alreadyOpen, launchCommand: launchCommand, ruleSpecs: ruleSpecs, rulesLua: rulesLua, launchLua: launchLua,
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
     parseDesktopIndex: parseDesktopIndex, appNames: appNames, appName: appName,
     relativeTime: relativeTime, sessionIcon: sessionIcon, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
-    shuttingDown: shuttingDown, trimLog: trimLog, logLine: logLine, eventDelay: eventDelay
+    shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay,
+    pressureTotals: pressureTotals, pressureLoad: pressureLoad, calm: calm
   }
 }

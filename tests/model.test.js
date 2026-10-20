@@ -38,6 +38,7 @@ test("env diff keeps only the app's own variables and skips volatile ones", () =
   const session = "A=1\0B=2\0"
   const app = "A=1\0B=2\0QT_STYLE=kvantum\0PWD=/x\0ELECTRON_RUN=1\0NOEQ\0"
   assert.deepEqual(M.envDiff(session, app), { QT_STYLE: "kvantum" })
+  assert.deepEqual(M.envDiff("A=1\0", "A=1\0PATH=/old/bin\0"), {}, "PATH goes stale, the session's own is used")
 })
 
 test("program classification: agents resume, plain TUIs restart, shells are ignored", () => {
@@ -115,6 +116,7 @@ test("window rules: only classes that sat on a single workspace get one", () => 
   const lua = M.rulesLua([{ class: "chrome-a.b-Default", workspace: "special:x" }])
   assert.match(lua, /class = \[==\[\^\(chrome-a\\\.b-Default\)\$\]==\]/)
   assert.match(lua, /workspace = \[==\[special:x silent\]==\]/)
+  assert.ok(lua.startsWith(M.RULES_OFF_LUA + "; "), "rules left by an interrupted restore are switched off first")
 })
 
 test("restorable drops ignored and empty entries", () => {
@@ -176,11 +178,7 @@ test("shutdown detection: uwsm stop, systemd stopping, or a queued poweroff/rebo
   assert.equal(M.shuttingDown({ uwsmStop: false, systemState: "running", timerExecStarts: ["something else"] }), false)
 })
 
-test("log trimming and line format", () => {
-  assert.equal(M.trimLog("a\nb\n"), null)
-  const long = Array.from({ length: 1001 }, (_, i) => "l" + i).join("\n") + "\n"
-  const trimmed = M.trimLog(long)
-  assert.equal(trimmed.split("\n")[0], "l500")
+test("log line format", () => {
   assert.equal(M.logLine(new Date(2026, 0, 2, 3, 4, 5), "save: x"), "2026-01-02 03:04:05 save: x\n")
 })
 
@@ -256,4 +254,55 @@ test("the bar icon is the anchor in every state", () => {
   assert.equal(M.restoreProblem({ placed: 1, expected: 2, off: 0 }), true)
   assert.equal(M.restoreProblem({ placed: 2, expected: 2, off: 0 }), false)
   assert.equal(M.restoreProblem(null), false)
+})
+
+test("agent session lookup: Codex and pi search since the process started, never without that time", () => {
+  assert.deepEqual(M.sessionLookup("codex", "/p/it's", 1700, "/h"), ["sqlite3", "-readonly", "/h/.codex/state_5.sqlite",
+    "select id from threads where cwd = '/p/it''s' and updated_at >= 1700 order by updated_at desc limit 1"])
+  assert.deepEqual(M.sessionLookup("pi", "/home/u/proj", 1700, "/h"), ["find", "/h/.pi/agent/sessions/--home-u-proj--",
+    "-name", "*.jsonl", "-newermt", "@1700", "-printf", "%T@ %f\\n"])
+  assert.equal(M.sessionLookup("codex", "/p", 0, "/h"), null, "unknown start: no resume rather than another session's")
+  assert.equal(M.sessionLookup("pi", "/p", 0, "/h"), null)
+  assert.equal(M.sessionLookup("nvim", "/p", 1700, "/h"), null)
+})
+
+test("an app that closed its window but keeps running stays in the session", () => {
+  const entry = { cmd: ["discord"], class: "discord", workspaces: ["3"], geometry: [] }
+  const remembered = { discord: { entry, pid: 50, cmdline: "discord\0" } }
+  const settings = M.defaultSettings()
+  const other = [win("0x1", 7, "fakeapp", 1, 0, 0, 10, 10)]
+  const alive = { 50: "discord\0" }
+  assert.deepEqual(M.keepRunning(remembered, [], other, settings, alive), [entry], "alive, no windows: kept")
+  assert.deepEqual(M.keepRunning(remembered, [], other, settings, {}), [], "process gone: dropped")
+  assert.deepEqual(M.keepRunning(remembered, [], other, settings, { 50: "other\0" }), [], "pid reused by another program: dropped")
+  assert.deepEqual(M.keepRunning(remembered, [], [win("0x2", 50, "chrome-x-Default", 1, 0, 0, 10, 10)], settings, alive), [],
+    "the process still has another window (web app inside a browser): dropped")
+  assert.deepEqual(M.keepRunning(remembered, [{ class: "discord" }], other, settings, alive), [], "already in the new snapshot: not duplicated")
+  assert.deepEqual(M.keepRunning(remembered, [], other, M.withIgnored(settings, "discord", true), alive), [], "ignored: never kept")
+})
+
+test("a closed terminal is never kept, even when its process lives", () => {
+  const entry = { cmd: ["foot"], class: "foot", workspaces: ["1"], geometry: [] }
+  const remembered = { foot: { entry, pid: 60, cmdline: "foot\0" } }
+  assert.deepEqual(M.keepRunning(remembered, [], [], M.defaultSettings(), { 60: "foot\0" }), [])
+})
+
+test("pressureTotals reads the some total of each PSI file and tolerates missing ones", () => {
+  const psi = "some avg10=0.00 avg60=0.00 avg300=0.00 total=114050548\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=999\n"
+  assert.deepEqual(M.pressureTotals([psi, "", null]), { cpu: 114050548, io: null, memory: null })
+  assert.deepEqual(M.pressureTotals(["junk", psi, psi]), { cpu: null, io: 114050548, memory: 114050548 })
+})
+
+test("pressureLoad is the stalled fraction between two samples", () => {
+  const load = M.pressureLoad({ cpu: 1000, io: 0, memory: null }, { cpu: 251000, io: 100000, memory: 5 }, 500)
+  assert.deepEqual(load, { cpu: 0.5, io: 0.2, memory: null })
+  assert.equal(M.pressureLoad({ cpu: 5, io: 0, memory: 0 }, { cpu: 5, io: 0, memory: 0 }, 0).cpu, null)
+})
+
+test("calm needs cpu < 0.30, io < 0.20 and memory < 0.10; a missing file is calm", () => {
+  assert.equal(M.calm({ cpu: 0.29, io: 0.19, memory: 0.09 }), true)
+  assert.equal(M.calm({ cpu: 0.30, io: 0, memory: 0 }), false)
+  assert.equal(M.calm({ cpu: 0, io: 0.20, memory: 0 }), false)
+  assert.equal(M.calm({ cpu: 0, io: 0, memory: 0.10 }), false)
+  assert.equal(M.calm({ cpu: null, io: null, memory: null }), true)
 })

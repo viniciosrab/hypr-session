@@ -56,6 +56,9 @@ Item {
   property bool ending: false
   property int logWrites: 0
   property string sessionEnv: ""
+  // Per class, the entry last saved with its pid and raw cmdline, to keep
+  // apps that closed their window but still run (see Model.keepRunning)
+  property var remembered: ({})
 
   // ---- Plumbing: processes, timers, files -----------------------------------------
 
@@ -145,20 +148,23 @@ Item {
     return hypr(["dispatch", lua]).then(function() { return sleep(150) })
   }
 
+  // Log writes run one at a time, in order: a trim never races an append.
+  property var logQueue: Promise.resolve()
+  function logStep(argv) {
+    logQueue = logQueue.then(function() { return run(argv) })
+  }
   function log(message) {
-    run(["sh", "-c", 'printf "%s" "$1" >>"$2"', "_", Model.logLine(new Date(), message), logPath])
+    logStep(["sh", "-c", 'printf "%s" "$1" >>"$2"', "_", Model.logLine(new Date(), message), logPath])
     if (++logWrites % 50 === 0) trimLog()
   }
+  // Past 1000 lines the oldest 500 go
   function trimLog() {
-    run(["cat", logPath]).then(function(r) {
-      var trimmed = Model.trimLog(r.out)
-      if (trimmed !== null) logWriter.setText(trimmed)
-    })
+    logStep(["sh", "-c", '[ "$(wc -l <"$1" 2>/dev/null || echo 0)" -gt 1000 ] || exit 0; tail -n +501 "$1" >"$1.tmp" && mv "$1.tmp" "$1"', "_", logPath])
   }
-
-  FileView { id: logWriter; path: root.logPath; atomicWrites: true; printErrors: false }
-  FileView { id: stateWriter; path: root.statePath; atomicWrites: true; printErrors: false }
-  FileView { id: restoredWriter; path: root.restoredPath; atomicWrites: true; printErrors: false }
+  // The session holds command lines and launch env: only the user reads it
+  function protect(paths) { return run(["chmod", "600"].concat(paths)) }
+  FileView { id: stateWriter; path: root.statePath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
+  FileView { id: restoredWriter; path: root.restoredPath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
   FileView { id: settingsWriter; path: root.settingsPath; atomicWrites: true; printErrors: false }
 
   // ---- Settings -----------------------------------------------------------------
@@ -248,23 +254,15 @@ Item {
       try { return Promise.resolve(JSON.parse(readFile(home + "/.claude/sessions/" + pid + ".json")).sessionId || "") }
       catch (e) { return Promise.resolve("") }
     }
-    if (name === "codex") {
-      // Codex logs threads under a shared daemon: the thread last active in
-      // this directory since this codex started
-      var sql = "select id from threads where cwd = '" + cwd.replace(/'/g, "''") + "' and updated_at >= " + procStart(pid)
-        + " order by updated_at desc limit 1"
-      return run(["sqlite3", "-readonly", home + "/.codex/state_5.sqlite", sql]).then(function(r) { return r.out.trim() })
-    }
-    if (name === "pi") {
-      // pi keeps one file per session in a folder named after the directory
-      var dir = home + "/.pi/agent/sessions/--" + cwd.replace(/^\//, "").replace(/\//g, "-") + "--"
-      return run(["find", dir, "-name", "*.jsonl", "-newermt", "@" + procStart(pid), "-printf", "%T@ %f\\n"]).then(function(r) {
-        var newest = r.out.split("\n").filter(function(l) { return l }).sort(function(a, b) { return parseFloat(b) - parseFloat(a) })[0] || ""
-        var m = /_([0-9a-f-]+)\.jsonl$/.exec(newest)
-        return m ? m[1] : ""
-      })
-    }
-    return Promise.resolve("")
+    if (name !== "codex" && name !== "pi") return Promise.resolve("")
+    var lookup = Model.sessionLookup(name, cwd, procStart(pid), home)
+    if (!lookup) return Promise.resolve("")
+    return run(lookup).then(function(r) {
+      if (name === "codex") return r.out.trim()
+      var newest = r.out.split("\n").filter(function(l) { return l }).sort(function(a, b) { return parseFloat(b) - parseFloat(a) })[0] || ""
+      var m = /_([0-9a-f-]+)\.jsonl$/.exec(newest)
+      return m ? m[1] : ""
+    })
   }
 
   // The program running inside terminal `pid`: { cwd, command } or null.
@@ -357,6 +355,7 @@ Item {
     var terminalPids = targets.filter(function(t) { return Model.TERMINALS.indexOf(t.class) !== -1 }).map(function(t) { return t.pid })
     var ctx = { table: { children: {}, name: {} }, cwdOf: {}, launcherUrls: null }
     var entries = []
+    var fresh = {}
     return (terminalPids.length ? processTable() : Promise.resolve(ctx.table)).then(function(table) {
       ctx.table = table
       var pids = []
@@ -372,9 +371,25 @@ Item {
     }).then(function(cwdOf) {
       ctx.cwdOf = cwdOf
       return each(targets, function(t) {
-        return entryFor(t, clients, ctx).then(function(entry) { if (entry) entries.push(entry) })
+        return entryFor(t, clients, ctx).then(function(entry) {
+          if (!entry) return
+          entries.push(entry)
+          if (!(t.class in fresh)) fresh[t.class] = { entry: entry, pid: t.pid, cmdline: readFile("/proc/" + t.pid + "/cmdline") }
+        })
       })
-    }).then(function() { return entries })
+    }).then(function() {
+      var alive = {}
+      Object.keys(remembered).forEach(function(cls) {
+        var pid = remembered[cls].pid
+        if (!(cls in fresh) && !(pid in alive)) alive[pid] = readFile("/proc/" + pid + "/cmdline")
+      })
+      var kept = Model.keepRunning(remembered, entries, clients, settings, alive)
+      Object.keys(remembered).forEach(function(cls) {
+        if (!(cls in fresh) && kept.indexOf(remembered[cls].entry) !== -1) fresh[cls] = remembered[cls]
+      })
+      remembered = fresh
+      return entries.concat(kept)
+    })
   }
 
   function writeState(entries) {
@@ -418,6 +433,31 @@ Item {
     return hypr(["dispatch", "hl.dsp.window.move({ workspace = \"" + ws + "\", follow = false, window = \"address:" + addr + "\" })"])
   }
 
+  readonly property string pressureDir: Quickshell.env("HYPR_SESSION_PRESSURE") || "/proc/pressure"
+
+  function pressureSample() {
+    return Model.pressureTotals(["cpu", "io", "memory"].map(function(name) { return readFile(pressureDir + "/" + name) }))
+  }
+
+  // Waits until the system is calm (cpu, io and memory pressure low), at most
+  // 10s, so heavy apps don't pile onto each other at boot.
+  function waitCalm(cls) {
+    var samples = 0
+    var isCalm = false
+    return loop(function() {
+      if (isCalm || samples >= 20) return false
+      samples++
+      var before = pressureSample()
+      var start = Date.now()
+      return sleep(500).then(function() {
+        isCalm = Model.calm(Model.pressureLoad(before, pressureSample(), Date.now() - start))
+        return true
+      })
+    }).then(function() {
+      if (samples > 1) log("restore: waited " + Math.round(samples / 2) + "s for the system to calm down before " + cls)
+    })
+  }
+
   function rulesOff() { return hypr(["eval", Model.RULES_OFF_LUA]) }
 
   // Launches one saved app (unless its windows are open already) and sends
@@ -436,6 +476,10 @@ Item {
     return hyprJson(["clients", "-j"]).then(function(clients) {
       known = browser ? r.claimed.slice() : addresses(clients)
       return browser ? sleep(1000) : null
+    }).then(function() {
+      // Wait first, look right before launching: a browser may reopen this
+      // window by itself while we wait
+      return waitCalm(cls)
     }).then(function() {
       return hyprJson(["clients", "-j"])
     }).then(function(clients) {
@@ -707,8 +751,14 @@ Item {
   // reload must never relaunch the apps.
   function start() {
     sessionEnv = readFile("/proc/" + Quickshell.processId + "/environ")
+    trimLog()
     loadAppNames()
-    return run(["cat", statePath]).then(function(cat) {
+    // A restore cut short by a shell restart left its window rules on
+    return rulesOff().then(function() {
+      return protect([statePath, restoredPath])
+    }).then(function() {
+      return run(["cat", statePath])
+    }).then(function(cat) {
       if (cat.code === 0) { stateText = cat.out; stateKnown = true }
       return run(["sh", "-c", '[ -e "$1" ] && echo no || { : >"$1"; echo yes; }', "_", markerPath])
     }).then(function(r) {
