@@ -30,31 +30,33 @@ Panel {
   readonly property color dim: Qt.darker(fg, 1.4)
   readonly property string fontName: bar ? bar.fontFamily : Style.font.family
 
+  // Text in the language picked under Omarchy's Setup > Language
+  Translations { id: tr; directory: Qt.resolvedUrl("i18n") }
+
   property bool appsExpanded: false
-  // Ticks while open so "há 2 min" stays true.
+  // Ticks while open so "2 min ago" stays true.
   property real now: Date.now()
 
   readonly property string heroTitle: {
-    if (!service) return "Sessão indisponível"
-    if (service.restoring) return "Restaurando…"
-    if (!prefs.autoSave) return "Salvamento pausado"
-    return service.lastSaveAt > 0 ? "Sessão salva" : "Ainda não salva"
+    if (!service) return tr.t("hero.unavailable")
+    if (service.restoring) return tr.t("hero.restoring")
+    if (!prefs.autoSave) return tr.t("hero.paused")
+    return service.lastSaveAt > 0 ? tr.t("hero.saved") : tr.t("hero.notSaved")
   }
   readonly property string heroMeta: {
-    if (!service) return "O serviço não está rodando"
-    if (service.lastSaveAt <= 0) return prefs.autoSave ? "Salva sozinha ao abrir ou fechar janelas" : "Ligue para começar a salvar"
-    var when = Model.relativeTime(service.lastSaveAt, now)
-    return (prefs.autoSave ? "" : "Último save ") + when + " · " + service.lastSaveApps + (service.lastSaveApps === 1 ? " app" : " apps")
+    if (!service) return tr.t("hero.serviceDown")
+    if (service.lastSaveAt <= 0) return prefs.autoSave ? tr.t("hero.autoSaves") : tr.t("hero.turnOn")
+    return Model.fill(tr.t(prefs.autoSave ? "hero.savedMeta" : "hero.pausedMeta"), [Model.relativeTime(service.lastSaveAt, now, tr), Model.appCount(service.lastSaveApps, tr)])
   }
   readonly property string restoreLine: service && service.lastRestore
-    ? "Restaurada " + Model.relativeTime(service.lastRestoreAt, now) + " · " + Model.restoreSummary(service.lastRestore)
+    ? Model.fill(tr.t("panel.restored"), [Model.relativeTime(service.lastRestoreAt, now, tr), Model.restoreSummary(service.lastRestore, tr)])
     : ""
   readonly property bool restoreOk: !Model.restoreProblem(service ? service.lastRestore : null)
 
   readonly property var options: [
-    { key: "restoreOnStart", label: "Reabrir apps ao ligar" },
-    { key: "rearrangeLayout", label: "Refazer o layout das janelas" },
-    { key: "resumeAgents", label: "Retomar Claude, Codex e pi" }
+    { key: "restoreOnStart", label: tr.t("option.restoreOnStart") },
+    { key: "rearrangeLayout", label: tr.t("option.rearrangeLayout") },
+    { key: "resumeAgents", label: tr.t("option.resumeAgents") }
   ]
 
   function open() {
@@ -186,7 +188,7 @@ Panel {
           spacing: Style.space(8)
           Button {
             width: (parent.width - parent.spacing) / 2
-            text: "Salvar agora"
+            text: tr.t("panel.saveNow")
             bordered: true
             foreground: root.fg
             fontFamily: root.fontName
@@ -195,7 +197,7 @@ Panel {
           }
           Button {
             width: (parent.width - parent.spacing) / 2
-            text: "Restaurar agora"
+            text: tr.t("panel.restoreNow")
             bordered: true
             foreground: root.fg
             fontFamily: root.fontName
@@ -211,7 +213,7 @@ Panel {
           width: parent.width
           spacing: Style.space(8)
           PanelSectionHeader {
-            text: "Ao restaurar"
+            text: tr.t("panel.onRestore")
             foreground: root.fg
             fontFamily: root.fontName
           }
@@ -239,7 +241,7 @@ Panel {
             Text {
               id: appsHeader
               anchors.left: parent.left
-              text: "Apps salvos"
+              text: tr.t("panel.savedApps")
               color: root.fg
               font.family: root.fontName
               font.pixelSize: Style.font.body
@@ -247,7 +249,7 @@ Panel {
             Text {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              text: root.savedCount + " de " + root.apps.length + "  " + (root.appsExpanded ? "󰅀" : "󰅂")
+              text: Model.fill(tr.t("panel.savedCount"), [root.savedCount, root.apps.length]) + "  " + (root.appsExpanded ? "󰅀" : "󰅂")
               color: root.dim
               font.family: root.fontName
               font.pixelSize: Style.font.body

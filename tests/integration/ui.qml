@@ -8,6 +8,8 @@ import "plugin" as Plugin
 // Mounts the bar widget and its panel the way omarchy-shell does (Omarchy's
 // own PluginShellApi and PluginBarApi), backed by the real service and the
 // fake hyprctl. Fails on any QML binding or type error in the output.
+// Text follows Omarchy's display language: English at first, as run.sh sets
+// it, then Portuguese once the language file changes.
 ShellRoot {
   id: harness
 
@@ -45,13 +47,13 @@ ShellRoot {
       until: function() {
         if (harness.widget.children[1].text !== "\u{F0031}") return false
         return harness.widget.service === harness.service && harness.service.lastSaveAt > 0
-          && harness.widget.children[1].tooltipText === "Sessão salva agora · 1 app"
+          && harness.widget.children[1].tooltipText === "Session saved now · 1 app"
       } },
     { name: "clicking the icon opens the panel: saved status, three restore switches, apps collapsed",
       run: function() { harness.widget.toggle() },
       until: function() {
         var p = harness.panel
-        return p && p.opened && p.heroTitle === "Sessão salva" && p.heroMeta === "agora · 1 app"
+        return p && p.opened && p.heroTitle === "Session saved" && p.heroMeta === "now · 1 app"
           && p.options.length === 3 && p.appsExpanded === false && p.restoreLine === ""
       } },
     { name: "apps show the program name when no launcher knows the class, all saved",
@@ -63,10 +65,19 @@ ShellRoot {
         return p.apps.some(function(a) { return a.class === "gone" }) && p.savedCount === p.apps.length - 1
       } },
     { name: "an incomplete restore keeps the anchor and turns the panel line into a warning",
-      run: function() { harness.service.lastRestore = { placed: 1, expected: 2, off: 0, layout: true } },
+      run: function() { harness.service.lastRestore = { placed: 1, expected: 2, off: 0, layout: true }; harness.service.lastRestoreAt = Date.now() },
       until: function() {
         var b = harness.widget.children[1]
         return b.text === "\u{F0031}" && harness.panel.restoreOk === false
+          && harness.panel.restoreLine === "Restored now · 1 of 2 windows came back"
+      } },
+    { name: "switching Omarchy to Portuguese re-renders the panel and its options without a restart",
+      run: function() { language.running = true },
+      until: function() {
+        var p = harness.panel
+        return p.heroTitle === "Sessão salva" && p.heroMeta === "agora · 1 app"
+          && p.restoreLine === "Restaurada agora · 1 de 2 janelas voltaram"
+          && p.options[0].label === "Reabrir apps ao ligar"
       } },
     { name: "pausing autosave changes the headline and dims the bar icon",
       run: function() { harness.service.setSetting("autoSave", false) },
@@ -88,6 +99,11 @@ ShellRoot {
       harness.widget = widgetComponent.createObject(harness)
       harness.advance()
     }
+  }
+
+  Process {
+    id: language
+    command: ["sh", "-c", 'printf "pt-BR\\n" >"$HOME/.config/omarchy/language"']
   }
 
   function advance() {

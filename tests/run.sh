@@ -29,16 +29,20 @@ for test in "$source_root"/tests/integration/${ONLY:-*}.qml; do
   work="$test_root/$name"
   mkdir -p "$work/app/plugin" "$work/app/host" "$work/fake" "$work/home/.local/state/omarchy/settings"
   cp -- "$source_root"/*.qml "$source_root"/*.js "$source_root"/manifest.json "$work/app/plugin/"
+  cp -r -- "$source_root/i18n" "$work/app/plugin/"
   cp -r -- "$omarchy_shell/Commons" "$omarchy_shell/Ui" "$work/app/"
   cp -- "$omarchy_shell/services/PluginShellApi.qml" "$work/app/host/"
   cp -- "$test" "$work/app/shell.qml"
   echo '[]' >"$work/fake/clients.json"
+  # The display language Omarchy's Setup > Language writes; tests switch it
+  mkdir -p "$work/home/.config/omarchy"
+  echo en >"$work/home/.config/omarchy/language"
   mkdir -p "$work/pressure"
   for res in cpu io memory; do
     printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1000\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1000\n' >"$work/pressure/$res"
   done
 
-  env -u HYPR_SESSION_FILE QS_DISABLE_CRASH_HANDLER=1 XDG_STATE_HOME="$work/home/.local/state" HOME="$work/home" PATH="$source_root/tests/bin:$PATH" FAKE_HYPR="$work/fake" FAKE_PID="$sleeper" \
+  env -u HYPR_SESSION_FILE -u OMARCHY_LANGUAGE_FILE QS_DISABLE_CRASH_HANDLER=1 XDG_STATE_HOME="$work/home/.local/state" XDG_CONFIG_HOME="$work/home/.config" HOME="$work/home" PATH="$source_root/tests/bin:$PATH" FAKE_HYPR="$work/fake" FAKE_PID="$sleeper" \
     HYPR_SESSION_MARKER="$work/marker" HYPR_SESSION_PRESSURE="$work/pressure" timeout 90s qs --no-color -p "$work/app" >"$work/output" 2>&1 || true
 
   if grep -q SESSION_PASS "$work/output" \

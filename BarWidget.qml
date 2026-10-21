@@ -12,6 +12,9 @@ BarWidget {
   readonly property var service: bar && bar.shell ? bar.shell.serviceFor("vinicios.hypr-session") : null
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
 
+  // Text in the language picked under Omarchy's Setup > Language
+  Translations { id: tr; directory: Qt.resolvedUrl("i18n") }
+
   function injectPanel() {
     var target = panelLoader.item
     if (!target) return
@@ -51,12 +54,12 @@ BarWidget {
     dimmed: root.service ? !root.service.settings.autoSave : false
     tooltipText: {
       if (root.opened || !root.service) return ""
-      if (root.service.restoring) return "Restaurando a sessão…"
-      if (Model.restoreProblem(root.service.lastRestore)) return "Restauração incompleta: " + Model.restoreSummary(root.service.lastRestore)
-      if (!root.service.settings.autoSave) return "Salvamento pausado"
+      if (root.service.restoring) return tr.t("tooltip.restoring")
+      if (Model.restoreProblem(root.service.lastRestore)) return Model.fill(tr.t("tooltip.incomplete"), [Model.restoreSummary(root.service.lastRestore, tr)])
+      if (!root.service.settings.autoSave) return tr.t("tooltip.paused")
       return root.service.lastSaveAt > 0
-        ? "Sessão salva " + Model.relativeTime(root.service.lastSaveAt, Date.now()) + " · " + root.service.lastSaveApps + (root.service.lastSaveApps === 1 ? " app" : " apps")
-        : "Sessão ainda não salva"
+        ? Model.fill(tr.t("tooltip.saved"), [Model.relativeTime(root.service.lastSaveAt, Date.now(), tr), Model.appCount(root.service.lastSaveApps, tr)])
+        : tr.t("tooltip.notSaved")
     }
 
     onPressed: function(b) { root.toggle() }
