@@ -231,23 +231,70 @@ test("desktop index lines parse into entries", () => {
     [{ base: "foot", name: "Foot", wmClass: "" }, { base: "y", name: "", wmClass: "Y" }])
 })
 
-test("relative time reads naturally", () => {
-  const now = new Date(2026, 0, 2, 12, 0, 0).getTime()
-  assert.equal(M.relativeTime(now - 20 * 1000, now), "agora")
-  assert.equal(M.relativeTime(now - 60 * 1000, now), "há 1 min")
-  assert.equal(M.relativeTime(now - 59 * 60 * 1000, now), "há 59 min")
-  assert.equal(M.relativeTime(now - 3 * 3600 * 1000, now), "há 3 h")
-  assert.equal(M.relativeTime(now - 30 * 3600 * 1000, now), "em 01/01 às 06:00")
-  assert.equal(M.relativeTime(0, now), "")
+// A stand-in for Commons.Translations over the plugin's own catalogs: the
+// language's string, then English's, with plural forms picked by count.
+function translator(code) {
+  const english = require("../i18n/en.json")
+  const strings = { ...english, ...(code === "en" ? {} : require(`../i18n/${code}.json`)) }
+  const one = code === "pt-BR" ? (n) => n <= 1 : (n) => n === 1
+  return {
+    t: (key) => { const v = strings[key]; return typeof v === "object" ? v.other : v },
+    tn: (key, count) => { const v = strings[key]; return typeof v === "object" ? (one(count) ? v.one : v.other) : v },
+  }
+}
+
+test("every language carries the same strings as English, with the same holes", () => {
+  const english = require("../i18n/en.json")
+  const holes = (v) => JSON.stringify(v).match(/%[0-9]/g)?.sort() ?? []
+  for (const file of require("node:fs").readdirSync(`${__dirname}/../i18n`)) {
+    const catalog = require(`../i18n/${file}`)
+    assert.deepEqual(Object.keys(catalog).sort(), Object.keys(english).sort(), file)
+    for (const key of Object.keys(english))
+      if (typeof english[key] === "string") assert.deepEqual(holes(catalog[key]), holes(english[key]), `${file} ${key}`)
+  }
 })
 
-test("restore result in one short phrase", () => {
-  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 0, layout: true }), "tudo no lugar")
-  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 0, layout: false }), "4 janelas reabertas")
-  assert.equal(M.restoreSummary({ placed: 3, expected: 4, off: 0, layout: true }), "3 de 4 janelas voltaram")
-  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 1, layout: true }), "1 janela fora do lugar")
-  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 2, layout: true }), "2 janelas fora do lugar")
-  assert.equal(M.restoreSummary({ placed: 0, expected: 0, off: 0, layout: true }), "nada a reabrir")
+test("relative time reads naturally in the system language", () => {
+  const now = new Date(2026, 0, 2, 12, 0, 0).getTime()
+  const en = translator("en")
+  assert.equal(M.relativeTime(now - 20 * 1000, now, en), "now")
+  assert.equal(M.relativeTime(now - 60 * 1000, now, en), "1 min ago")
+  assert.equal(M.relativeTime(now - 3 * 3600 * 1000, now, en), "3 h ago")
+  assert.equal(M.relativeTime(now - 30 * 3600 * 1000, now, en), "on 01/01 at 06:00")
+  assert.equal(M.relativeTime(now - 40 * 86400 * 1000, now, en), "on 11/23 at 12:00", "month first in English")
+  assert.equal(M.relativeTime(0, now, en), "")
+  const pt = translator("pt-BR")
+  assert.equal(M.relativeTime(now - 20 * 1000, now, pt), "agora")
+  assert.equal(M.relativeTime(now - 60 * 1000, now, pt), "há 1 min")
+  assert.equal(M.relativeTime(now - 59 * 60 * 1000, now, pt), "há 59 min")
+  assert.equal(M.relativeTime(now - 3 * 3600 * 1000, now, pt), "há 3 h")
+  assert.equal(M.relativeTime(now - 30 * 3600 * 1000, now, pt), "em 01/01 às 06:00")
+  assert.equal(M.relativeTime(now - 40 * 86400 * 1000, now, pt), "em 23/11 às 12:00", "day first in Portuguese")
+})
+
+test("restore result in one short phrase, in the system language", () => {
+  const en = translator("en")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 0, layout: true }, en), "everything in place")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 0, layout: false }, en), "4 windows reopened")
+  assert.equal(M.restoreSummary({ placed: 1, expected: 1, off: 0, layout: false }, en), "1 window reopened")
+  assert.equal(M.restoreSummary({ placed: 3, expected: 4, off: 0, layout: true }, en), "3 of 4 windows came back")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 1, layout: true }, en), "1 window out of place")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 2, layout: true }, en), "2 windows out of place")
+  assert.equal(M.restoreSummary({ placed: 0, expected: 0, off: 0, layout: true }, en), "nothing to reopen")
+  const pt = translator("pt-BR")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 0, layout: true }, pt), "tudo no lugar")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 0, layout: false }, pt), "4 janelas reabertas")
+  assert.equal(M.restoreSummary({ placed: 1, expected: 1, off: 0, layout: false }, pt), "1 janela reaberta")
+  assert.equal(M.restoreSummary({ placed: 3, expected: 4, off: 0, layout: true }, pt), "3 de 4 janelas voltaram")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 1, layout: true }, pt), "1 janela fora do lugar")
+  assert.equal(M.restoreSummary({ placed: 4, expected: 4, off: 2, layout: true }, pt), "2 janelas fora do lugar")
+  assert.equal(M.restoreSummary({ placed: 0, expected: 0, off: 0, layout: true }, pt), "nada a reabrir")
+})
+
+test("an app count takes the plural the language wants", () => {
+  assert.equal(M.appCount(1, translator("en")), "1 app")
+  assert.equal(M.appCount(6, translator("en")), "6 apps")
+  assert.equal(M.appCount(6, translator("pt-BR")), "6 apps")
 })
 
 test("the bar icon is the anchor in every state", () => {

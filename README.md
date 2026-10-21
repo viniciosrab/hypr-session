@@ -24,16 +24,19 @@ Requires Hyprland 0.56 or newer. `sqlite3` is only needed to resume Codex.
 
 ## Panel
 
-Click the bar icon to see when the session was last saved and restored, and to save or restore right away.
+Click the bar icon to see when the session was last saved and restored, and to save or restore right away. The switch next to the status turns automatic saving on or off; while it's off, the saved session stays frozen as it is.
 
-| Option (all on by default) | When off |
+| On restore (all on by default) | When off |
 |---|---|
-| Restaurar ao iniciar (restore on start) | Nothing reopens on boot. The session is still saved. |
-| Salvar automaticamente (save automatically) | The saved session stays frozen as it is. |
-| Remontar layout (rebuild layout) | Apps return to the right workspace, without redoing the layout. |
-| Retomar agentes nos terminais (resume agents) | Claude, Codex and pi return to their folder without reopening the conversation. |
+| Reopen apps on startup | Nothing reopens on boot. The session is still saved. |
+| Rebuild the window layout | Apps return to the right workspace, without redoing the layout. |
+| Resume Claude, Codex and pi | They return to their folder without reopening the conversation. |
 
-Under **Não salvar estes apps** (don't save these apps), tick the apps that should not be saved or reopened.
+Open **Saved apps** and switch off the apps that should not be saved or reopened.
+
+## Language
+
+The panel, the tooltip and `status` follow the language picked under Omarchy's **Setup > Language**, and switch along with it without a restart. English and Brazilian Portuguese ship today; any other language shows English. To add one, copy `i18n/en.json` to `i18n/<code>.json` (the code Omarchy uses, like `de` or `es-MX`) and translate the values.
 
 ## From the terminal
 
@@ -58,4 +61,4 @@ Delete `~/.local/bin/hypr-session` and `~/.config/omarchy/hooks/post-boot.d/rest
 - Two Codex instances in the same folder may come back in the same conversation.
 - Only the dwindle layout is rebuilt.
 - An app that closed into the tray (like Discord) stays saved only if its window was seen since the shell started.
-- If the shell restarts in the middle of a restore, it doesn't start over on its own. Use **Restaurar agora** (restore now).
+- If the shell restarts in the middle of a restore, it doesn't start over on its own. Use **Restore now**.

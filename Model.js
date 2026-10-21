@@ -472,23 +472,33 @@ function appName(cls, names, exe) {
   return parts[parts.length - 1] || String(cls)
 }
 
-function relativeTime(ms, now) {
+// The strings below come from the plugin's catalogs (i18n/<code>.json) in the
+// language picked under Omarchy's Setup > Language. `tr` is a
+// Commons.Translations: t(key) for a string, tn(key, count) for a plural one.
+// Holes are %1..%9, filled here because node has no QString.arg().
+function fill(text, args) {
+  return String(text).replace(/%([1-9])/g, function(hole, n) { return args[n - 1] === undefined ? hole : String(args[n - 1]) })
+}
+
+function appCount(count, tr) { return fill(tr.tn("apps.count", count), [count]) }
+
+function relativeTime(ms, now, tr) {
   if (!ms) return ""
   var seconds = Math.max(0, (now - ms) / 1000)
-  if (seconds < 60) return "agora"
-  if (seconds < 3600) return "há " + Math.floor(seconds / 60) + " min"
-  if (seconds < 86400) return "há " + Math.floor(seconds / 3600) + " h"
+  if (seconds < 60) return tr.t("time.now")
+  if (seconds < 3600) return fill(tr.t("time.minutesAgo"), [Math.floor(seconds / 60)])
+  if (seconds < 86400) return fill(tr.t("time.hoursAgo"), [Math.floor(seconds / 3600)])
   function pad(n) { return (n < 10 ? "0" : "") + n }
   var d = new Date(ms)
-  return "em " + pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + " às " + pad(d.getHours()) + ":" + pad(d.getMinutes())
+  return fill(tr.t("time.date"), [pad(d.getDate()), pad(d.getMonth() + 1), pad(d.getHours()), pad(d.getMinutes())])
 }
 
 // `r`: { placed, expected, off, layout } from the last restore.
-function restoreSummary(r) {
-  if (!r.expected) return "nada a reabrir"
-  if (r.placed < r.expected) return r.placed + " de " + r.expected + " janelas voltaram"
-  if (r.off > 0) return r.off + (r.off === 1 ? " janela fora do lugar" : " janelas fora do lugar")
-  return r.layout ? "tudo no lugar" : r.placed + " janelas reabertas"
+function restoreSummary(r, tr) {
+  if (!r.expected) return tr.t("restore.nothing")
+  if (r.placed < r.expected) return fill(tr.t("restore.partial"), [r.placed, r.expected])
+  if (r.off > 0) return fill(tr.tn("restore.misplaced", r.off), [r.off])
+  return r.layout ? tr.t("restore.allPlaced") : fill(tr.tn("restore.reopened", r.placed), [r.placed])
 }
 
 // The glyph for the bar and the panel: an anchor, the session stays where
@@ -543,7 +553,7 @@ if (typeof module !== "undefined" && module.exports) {
     restorable: restorable, alreadyOpen: alreadyOpen, launchCommand: launchCommand, ruleSpecs: ruleSpecs, rulesLua: rulesLua, launchLua: launchLua,
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
     parseDesktopIndex: parseDesktopIndex, appNames: appNames, appName: appName,
-    relativeTime: relativeTime, sessionIcon: sessionIcon, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
+    relativeTime: relativeTime, fill: fill, appCount: appCount, sessionIcon: sessionIcon, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
     shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay,
     pressureTotals: pressureTotals, pressureLoad: pressureLoad, calm: calm
   }

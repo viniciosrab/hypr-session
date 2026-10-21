@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
+import qs.Commons
 import "Model.js" as Model
 
 // Saves the Hyprland session as windows change and puts it back after a
@@ -40,8 +41,11 @@ Item {
   property real lastSaveAt: 0
   property int lastSaveApps: 0
   property real lastRestoreAt: 0
-  property string lastRestoreText: ""
   property var lastRestore: null
+  // For `status`, in the language picked under Omarchy's Setup > Language
+  readonly property string lastRestoreText: lastRestore ? Model.restoreSummary(lastRestore, tr) : ""
+
+  Translations { id: tr; directory: Qt.resolvedUrl("i18n") }
   property bool restoring: false
   property bool watching: false
   property var openClasses: []
@@ -531,7 +535,6 @@ Item {
         return settings.rearrangeLayout ? arrange(r.placements) : []
       }).then(function(off) {
         root.lastRestore = { placed: r.placements.length, expected: r.expected, off: off.length, layout: settings.rearrangeLayout }
-        root.lastRestoreText = Model.restoreSummary(root.lastRestore)
       }).then(rulesOff, function(e) {
         return rulesOff().then(function() { throw e })
       }).then(function() { root.lastRestoreAt = Date.now() })
