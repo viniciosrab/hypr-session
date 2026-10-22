@@ -501,10 +501,11 @@ function restoreSummary(r, tr) {
   return r.layout ? tr.t("restore.allPlaced") : fill(tr.tn("restore.reopened", r.placed), [r.placed])
 }
 
-// The glyph for the bar and the panel: an anchor, the session stays where
-// you left it. One shape in every state, so it always sits at the same size
-// as the stock bar icons; the state shows in its opacity and the tooltip.
-var ICON_SESSION = "\uDB80\uDC31" // nf-md anchor, U+F0031
+// The glyph for the bar and the panel: a monitor holding a tiled layout, the
+// desktop that comes back as you left it. One shape in every state, so it
+// always sits at the same size as the stock bar icons; the state shows in its
+// opacity and the tooltip.
+var ICON_SESSION = "\uDB82\uDE07" // nf-md monitor-dashboard, U+F0A07
 
 function restoreProblem(r) { return !!r && r.expected > 0 && (r.placed < r.expected || r.off > 0) }
 

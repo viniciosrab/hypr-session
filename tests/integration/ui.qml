@@ -45,7 +45,7 @@ ShellRoot {
   readonly property var steps: [
     { name: "widget finds the service and its tooltip tells the last save",
       until: function() {
-        if (harness.widget.children[1].text !== "\u{F0031}") return false
+        if (harness.widget.children[1].text !== "\u{F0A07}") return false
         return harness.widget.service === harness.service && harness.service.lastSaveAt > 0
           && harness.widget.children[1].tooltipText === "Session saved now · 1 app"
       } },
@@ -64,11 +64,11 @@ ShellRoot {
         var p = harness.panel
         return p.apps.some(function(a) { return a.class === "gone" }) && p.savedCount === p.apps.length - 1
       } },
-    { name: "an incomplete restore keeps the anchor and turns the panel line into a warning",
+    { name: "an incomplete restore keeps the icon and turns the panel line into a warning",
       run: function() { harness.service.lastRestore = { placed: 1, expected: 2, off: 0, layout: true }; harness.service.lastRestoreAt = Date.now() },
       until: function() {
         var b = harness.widget.children[1]
-        return b.text === "\u{F0031}" && harness.panel.restoreOk === false
+        return b.text === "\u{F0A07}" && harness.panel.restoreOk === false
           && harness.panel.restoreLine === "Restored now · 1 of 2 windows came back"
       } },
     { name: "switching Omarchy to Portuguese re-renders the panel and its options without a restart",
