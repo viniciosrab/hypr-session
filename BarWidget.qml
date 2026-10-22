@@ -50,7 +50,9 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.service ? Model.sessionIcon({ restoring: root.service.restoring, lastRestore: root.service.lastRestore }) : Model.sessionIcon({ restoring: false, lastRestore: null })
+    iconComponent: Component {
+      SessionIcon { size: button.opticalSize; color: button.foreground }
+    }
     dimmed: root.service ? !root.service.settings.autoSave : false
     tooltipText: {
       if (root.opened || !root.service) return ""

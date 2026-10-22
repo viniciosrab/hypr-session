@@ -501,14 +501,7 @@ function restoreSummary(r, tr) {
   return r.layout ? tr.t("restore.allPlaced") : fill(tr.tn("restore.reopened", r.placed), [r.placed])
 }
 
-// The glyph for the bar and the panel: a bookmark, the session picks up where
-// you left off. A single solid shape like the stock bar icons, and the same
-// one in every state; the state shows in its opacity and the tooltip.
-var ICON_SESSION = "\uDB80\uDCC0" // nf-md bookmark, U+F00C0
-
 function restoreProblem(r) { return !!r && r.expected > 0 && (r.placed < r.expected || r.off > 0) }
-
-function sessionIcon(state) { return ICON_SESSION }
 
 // ---- Calm before a launch ---------------------------------------------------
 
@@ -553,7 +546,7 @@ if (typeof module !== "undefined" && module.exports) {
     restorable: restorable, alreadyOpen: alreadyOpen, launchCommand: launchCommand, ruleSpecs: ruleSpecs, rulesLua: rulesLua, launchLua: launchLua,
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
     parseDesktopIndex: parseDesktopIndex, appNames: appNames, appName: appName,
-    relativeTime: relativeTime, fill: fill, appCount: appCount, sessionIcon: sessionIcon, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
+    relativeTime: relativeTime, fill: fill, appCount: appCount, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
     shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay,
     pressureTotals: pressureTotals, pressureLoad: pressureLoad, calm: calm
   }
