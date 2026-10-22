@@ -156,12 +156,7 @@ Panel {
           fontFamily: root.fontName
           iconOpacity: root.service && root.prefs.autoSave ? 1.0 : 0.45
           iconComponent: Component {
-            Text {
-              text: root.service ? Model.sessionIcon({ restoring: root.service.restoring, lastRestore: root.service.lastRestore }) : Model.sessionIcon({ restoring: false, lastRestore: null })
-              color: root.fg
-              font.family: root.fontName
-              font.pixelSize: Style.font.display
-            }
+            SessionIcon { size: Math.round(Style.font.display * 0.75); color: root.fg }
           }
           trailingControl: Component {
             ToggleSwitch {

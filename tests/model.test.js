@@ -297,10 +297,9 @@ test("an app count takes the plural the language wants", () => {
   assert.equal(M.appCount(6, translator("pt-BR")), "6 apps")
 })
 
-test("the bar icon is the bookmark in every state", () => {
-  for (const state of [{}, { restoring: true }, { lastRestore: { placed: 1, expected: 2, off: 0, layout: true } }])
-    assert.equal(M.sessionIcon(state), "\u{F00C0}")
+test("restoreProblem flags a restore that left windows out or misplaced", () => {
   assert.equal(M.restoreProblem({ placed: 1, expected: 2, off: 0 }), true)
+  assert.equal(M.restoreProblem({ placed: 2, expected: 2, off: 1 }), true)
   assert.equal(M.restoreProblem({ placed: 2, expected: 2, off: 0 }), false)
   assert.equal(M.restoreProblem(null), false)
 })
