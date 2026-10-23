@@ -51,7 +51,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     iconComponent: Component {
-      SessionIcon { size: button.opticalSize; color: button.foreground }
+      SessionIcon { size: button.opticalSize; tileColor: button.foreground }
     }
     dimmed: root.service ? !root.service.settings.autoSave : false
     tooltipText: {
