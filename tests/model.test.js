@@ -104,6 +104,44 @@ test("entry: an app with no readable cmdline is skipped; geometry keeps floating
   assert.deepEqual(e.geometry, [{ at: [1, 2], size: [3, 4], floating: true }])
 })
 
+const FLATPAK_INFO = "[Application]\nname=app.borys.FigmaLinuxNext\nruntime=runtime/org.freedesktop.Platform/x86_64/24.08\n\n"
+  + "[Instance]\ninstance-id=123\nbranch=master\narch=x86_64\n\n[Context]\nshared=network;\n"
+
+test("flatpak info: the app id, branch and arch of a sandboxed process", () => {
+  assert.deepEqual(M.flatpakInfo(FLATPAK_INFO), { id: "app.borys.FigmaLinuxNext", branch: "master", arch: "x86_64" })
+  assert.deepEqual(M.flatpakInfo("[Application]\nname=org.x.App\n"), { id: "org.x.App", branch: "", arch: "" })
+  assert.equal(M.flatpakInfo(""), null, "not in a flatpak")
+  assert.equal(M.flatpakInfo("[Runtime]\nname=org.freedesktop.Platform\n"), null, "a bare runtime is no app to relaunch")
+})
+
+test("entry: a flatpak app relaunches through flatpak run, without its sandbox env", () => {
+  const w = [win("0x1", 10, "figma-linux-next", 4, 0, 0, 1920, 1080)]
+  const e = M.buildEntry({ class: "figma-linux-next", windows: w, cmdline: "/app/main/electron\0",
+    flatpak: { id: "app.borys.FigmaLinuxNext", branch: "master", arch: "x86_64" },
+    env: { LD_PRELOAD: "/app/lib/libzypak-preload-host.so" } })
+  assert.deepEqual(e.cmd, ["flatpak", "run", "--branch=master", "--arch=x86_64", "app.borys.FigmaLinuxNext"])
+  assert.equal("env" in e, false, "the env holds paths that only exist inside the sandbox")
+  assert.deepEqual(e.workspaces, ["4"])
+  assert.deepEqual(e.geometry, [{ at: [0, 0], size: [1920, 1080], floating: false }])
+  const bare = M.buildEntry({ class: "zapzap", windows: w, cmdline: "/usr/bin/python\0/app/bin/zapzap\0", flatpak: { id: "com.rtosta.zapzap", branch: "", arch: "" } })
+  assert.deepEqual(bare.cmd, ["flatpak", "run", "com.rtosta.zapzap"])
+})
+
+test("appimage path: only for the process running from the mounted image", () => {
+  const env = "APPIMAGE=/home/v/Apps/Tool.AppImage\0APPDIR=/tmp/.mount_Tool4x\0HOME=/home/v\0"
+  assert.equal(M.appImagePath(env, "/tmp/.mount_Tool4x/usr/bin/tool\0--flag\0"), "/home/v/Apps/Tool.AppImage")
+  assert.equal(M.appImagePath(env, "/usr/bin/chrome\0"), "", "a program started from inside an AppImage only inherits its env")
+  assert.equal(M.appImagePath("HOME=/home/v\0", "/usr/bin/x\0"), "")
+})
+
+test("entry: an AppImage relaunches its image, keeping its own arguments", () => {
+  const w = [win("0x1", 10, "tool", 5, 0, 0, 100, 100)]
+  const e = M.buildEntry({ class: "tool", windows: w, cmdline: "/tmp/.mount_Tool4x/usr/bin/tool\0--no-sandbox\0/tmp/.mount_Tool4x/resources/app\0",
+    appImage: "/home/v/Apps/Tool.AppImage", env: { LD_LIBRARY_PATH: "/tmp/.mount_Tool4x/usr/lib" } })
+  assert.deepEqual(e.cmd, ["/home/v/Apps/Tool.AppImage", "--no-sandbox"])
+  assert.equal("env" in e, false, "the env points into the mount, which is gone after exit")
+})
+
 test("launch command carries the saved env and quotes arguments", () => {
   assert.equal(M.launchCommand({ cmd: ["app", "a b"], env: { K: "v w" } }), "env 'K=v w' app 'a b'")
   assert.equal(M.launchCommand({ cmd: ["app"] }), "app")
@@ -224,6 +262,8 @@ test("app names come from desktop entries, by window class or file name, user en
   assert.equal(M.appName("foot", names, ""), "Foot (mine)", "the first entry wins")
   assert.equal(M.appName("some-tool", names, "/opt/x/bin/SomeTool"), "SomeTool", "falls back to the program name")
   assert.equal(M.appName("org.example.Thing", names, ""), "Thing", "then to the last part of the class")
+  assert.equal(M.appName("zapzap-window", M.appNames([{ base: "com.rtosta.zapzap", name: "ZapZap", wmClass: "" }]), "com.rtosta.zapzap"),
+    "ZapZap", "a flatpak id finds its launcher")
 })
 
 test("desktop index lines parse into entries", () => {

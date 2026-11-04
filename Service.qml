@@ -287,10 +287,16 @@ Item {
     return next()
   }
 
+  // The Flatpak app process `pid` belongs to, or null (see Model.flatpakInfo).
+  function flatpakOf(pid) { return Model.flatpakInfo(readFile("/proc/" + pid + "/root/.flatpak-info")) }
+
   function rememberOpen(clients) {
     var exe = {}
     Model.targets(clients, null).forEach(function(t) {
-      if (!(t.class in exe)) exe[t.class] = Model.parseCmdline(readFile("/proc/" + t.pid + "/cmdline"))[0] || ""
+      if (t.class in exe) return
+      // A Flatpak's program sits inside its sandbox: name it by its app id
+      var flatpak = flatpakOf(t.pid)
+      exe[t.class] = flatpak ? flatpak.id : Model.parseCmdline(readFile("/proc/" + t.pid + "/cmdline"))[0] || ""
     })
     root.openClasses = Object.keys(exe).sort()
     updateApps(exe)
@@ -340,6 +346,7 @@ Item {
       return terminal ? terminalProgram(t.pid, ctx.table, ctx.cwdOf) : null
     }).then(function(program) {
       var kids = ctx.table.children[String(t.pid)]
+      var environ = terminal || web ? "" : readFile("/proc/" + t.pid + "/environ")
       return Model.buildEntry({
         class: t.class,
         windows: Model.windowsOf(clients, t.pid, t.class),
@@ -347,8 +354,10 @@ Item {
         webUrl: webUrl,
         cwd: terminal && kids ? ctx.cwdOf[kids[0]] || "" : "",
         program: program,
-        env: terminal || web ? {} : Model.envDiff(sessionEnv, readFile("/proc/" + t.pid + "/environ")),
-        shell: Quickshell.env("SHELL") || "zsh"
+        env: terminal || web ? {} : Model.envDiff(sessionEnv, environ),
+        shell: Quickshell.env("SHELL") || "zsh",
+        flatpak: terminal || web ? null : flatpakOf(t.pid),
+        appImage: Model.appImagePath(environ, cmdline)
       })
     })
   }

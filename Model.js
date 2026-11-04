@@ -119,6 +119,39 @@ function envDiff(sessionEnv, appEnv) {
   return out
 }
 
+// ---- Sandboxed packages ---------------------------------------------------------
+
+// A Flatpak app's /proc/<pid>/cmdline names a program inside its sandbox
+// (/app/...), which does not exist outside it. Its /proc/<pid>/root/.flatpak-info
+// tells which app it is: { id, branch, arch }, or null when not in a flatpak.
+function flatpakInfo(text) {
+  var section = ""
+  var out = { id: "", branch: "", arch: "" }
+  String(text).split("\n").forEach(function(line) {
+    var head = /^\[(.*)\]\s*$/.exec(line)
+    if (head) { section = head[1]; return }
+    var m = /^([a-z-]+)=(.*)$/.exec(line)
+    if (!m) return
+    if (section === "Application" && m[1] === "name") out.id = m[2]
+    if (section === "Instance" && (m[1] === "branch" || m[1] === "arch")) out[m[1]] = m[2]
+  })
+  return out.id ? out : null
+}
+
+// An AppImage runs from a mount (APPDIR, under /tmp) that is gone once it
+// exits; APPIMAGE is the image file itself. Only for the process running from
+// the mount: programs it starts inherit the env but are not the AppImage.
+function appImagePath(appEnv, cmdline) {
+  var vars = {}
+  String(appEnv).split("\u0000").forEach(function(line) {
+    var eq = line.indexOf("=")
+    if (eq > 0) vars[line.slice(0, eq)] = line.slice(eq + 1)
+  })
+  var exe = parseCmdline(cmdline)[0] || ""
+  if (!vars.APPIMAGE || !vars.APPDIR || exe.indexOf(vars.APPDIR + "/") !== 0) return ""
+  return vars.APPIMAGE
+}
+
 // What a terminal's child process means for the saved command: the cwd it ran
 // in and the shell command that reopens it (null for "just the folder").
 // `id` is the session id looked up by the service (Claude, Codex, pi).
@@ -180,7 +213,8 @@ function windowsOf(clients, pid, cls) {
 }
 
 // Builds the entry for one target. `o`: { class, windows, cmdline (raw),
-// webUrl, cwd (terminal), program ({cwd, command}|null), env (object), shell }
+// webUrl, cwd (terminal), program ({cwd, command}|null), env (object), shell,
+// flatpak (flatpakInfo|null), appImage (path|"") }
 function buildEntry(o) {
   var cls = o.class
   var workspaces = o.windows.map(function(w) { return w.workspace.name })
@@ -192,6 +226,21 @@ function buildEntry(o) {
 
   var cmd = parseCmdline(o.cmdline)
   if (cmd.length === 0) return null
+
+  // Sandboxed packages: their command and env point inside the package, so
+  // they relaunch through it, without env
+  if (o.flatpak) {
+    cmd = ["flatpak", "run"]
+    if (o.flatpak.branch) cmd.push("--branch=" + o.flatpak.branch)
+    if (o.flatpak.arch) cmd.push("--arch=" + o.flatpak.arch)
+    cmd.push(o.flatpak.id)
+    return { cmd: cmd, class: cls, workspaces: workspaces, geometry: geometry }
+  }
+  if (o.appImage) {
+    var mount = cmd[0].replace(/^(.*\/\.mount_[^\/]*).*$/, "$1")
+    var args = cmd.slice(1).filter(function(a) { return a.indexOf(mount) !== 0 })
+    return { cmd: [o.appImage].concat(args), class: cls, workspaces: workspaces, geometry: geometry }
+  }
 
   if (BROWSERS.indexOf(cls) !== -1 && cmd.indexOf("--restore-last-session") === -1) cmd.push("--restore-last-session")
 
@@ -464,8 +513,9 @@ function appNames(entries) {
   return names
 }
 
+// `exe`: the program path, or a Flatpak app id (its launcher's file name).
 function appName(cls, names, exe) {
-  var known = names[String(cls).toLowerCase()]
+  var known = names[String(cls).toLowerCase()] || (exe && names[String(exe).toLowerCase()])
   if (known) return known
   if (exe) return String(exe).replace(/^.*\//, "")
   var parts = String(cls).split(".")
@@ -541,7 +591,7 @@ if (typeof module !== "undefined" && module.exports) {
     defaultSettings: defaultSettings, parseSettings: parseSettings, serializeSettings: serializeSettings,
     isIgnored: isIgnored, withIgnored: withIgnored, shQuote: shQuote, regexEscape: regexEscape,
     isWebAppClass: isWebAppClass, webAppKey: webAppKey, launcherUrl: launcherUrl, webAppUrl: webAppUrl,
-    parseCmdline: parseCmdline, envDiff: envDiff, classifyProgram: classifyProgram, agentName: agentName, sessionLookup: sessionLookup,
+    parseCmdline: parseCmdline, envDiff: envDiff, flatpakInfo: flatpakInfo, appImagePath: appImagePath, classifyProgram: classifyProgram, agentName: agentName, sessionLookup: sessionLookup,
     targets: targets, keepRunning: keepRunning, windowsOf: windowsOf, buildEntry: buildEntry, serializeEntries: serializeEntries, summary: summary,
     restorable: restorable, alreadyOpen: alreadyOpen, launchCommand: launchCommand, ruleSpecs: ruleSpecs, rulesLua: rulesLua, launchLua: launchLua,
     placement: placement, layoutPlan: layoutPlan, aimPlan: aimPlan, offWindows: offWindows,
