@@ -484,7 +484,9 @@ function logLine(now, message) {
 // it flipped, the plugin follows that window's size while it is open, and
 // when it closes the app's size is remembered (or forgotten, when the window
 // was no longer pseudotiled). A new window of that app opens pseudotiled at
-// that size.
+// that size: the app's main window (the initial title the size came from)
+// through a window rule, so it maps at that size, any other tiled one
+// resized right after it opens.
 
 // "55d0c", "0x55d0c" or "0X55D0C" -> "0x55d0c"; "" for anything else.
 function windowAddress(text) {
@@ -492,7 +494,8 @@ function windowAddress(text) {
   return m ? "0x" + m[1].toLowerCase() : ""
 }
 
-// The sizes file, { class: [w, h] }, without anything malformed.
+// The sizes file, { class: [w, h] or [w, h, initialTitle] }, without anything
+// malformed.
 function parsePseudoSizes(text) {
   var out = {}
   var raw
@@ -500,8 +503,10 @@ function parsePseudoSizes(text) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out
   Object.keys(raw).forEach(function(cls) {
     var s = raw[cls]
-    if (cls !== "" && Array.isArray(s) && s.length === 2 && s.every(function(n) { return typeof n === "number" && n > 0 }))
-      out[cls] = [Math.round(s[0]), Math.round(s[1])]
+    if (cls === "" || !Array.isArray(s) || (s.length !== 2 && s.length !== 3)) return
+    if (!s.slice(0, 2).every(function(n) { return typeof n === "number" && n > 0 })) return
+    out[cls] = [Math.round(s[0]), Math.round(s[1])]
+    if (typeof s[2] === "string" && s[2] !== "") out[cls].push(s[2])
   })
   return out
 }
@@ -518,9 +523,10 @@ function pseudoFlipped(tracked, addr) {
 }
 
 // A window the plugin itself opened pseudotiled.
-function pseudoOpened(tracked, addr, cls, size) {
+function pseudoOpened(tracked, addr, cls, size, title) {
   var next = JSON.parse(JSON.stringify(tracked))
   next[addr] = { pseudo: true, class: cls, size: size.slice() }
+  if (title) next[addr].title = title
   return next
 }
 
@@ -543,13 +549,14 @@ function pseudoTrack(tracked, sizes, clients) {
     var c = byAddr[addr]
     if (c) {
       t.class = c.class || t.class
+      if (c.initialTitle && !t.title) t.title = c.initialTitle
       if (t.pseudo && !c.floating && !c.fullscreen && c.size && c.size[0] > 0 && c.size[1] > 0) t.size = [c.size[0], c.size[1]]
       nextTracked[addr] = t
       return
     }
     if (!t.class) return
     var before = JSON.stringify(nextSizes[t.class] || null)
-    if (t.pseudo && t.size) nextSizes[t.class] = [Math.round(t.size[0]), Math.round(t.size[1])]
+    if (t.pseudo && t.size) nextSizes[t.class] = [Math.round(t.size[0]), Math.round(t.size[1])].concat(t.title ? [t.title] : [])
     else delete nextSizes[t.class]
     if (JSON.stringify(nextSizes[t.class] || null) !== before) changed = true
   })
@@ -561,7 +568,35 @@ function pseudoTrack(tracked, sizes, clients) {
 function pseudoOpenSize(sizes, client, settings) {
   if (!settings.rememberPseudoSize || !client || client.floating) return null
   var s = sizes[client.class]
-  return s ? s.slice() : null
+  return s ? s.slice(0, 2) : null
+}
+
+var PSEUDO_RULES_OFF_LUA = "for _, r in ipairs(_G.hypr_session_pseudo_rules or {}) do r:set_enabled(false) end; _G.hypr_session_pseudo_rules = {}"
+
+// One rule per app whose size knows its main window's initial title: that
+// window maps pseudotiled at the size. The title keeps the app's other
+// windows out (a picture-in-picture, a dialog): the rule is read before
+// Hyprland decides a window floats, so a float match cannot. Hyprland's size
+// counts the border, the remembered one does not. Rules live in Hyprland and
+// a config reload drops them; a new set starts by switching the old off.
+function pseudoRulesLua(sizes, border) {
+  var lua = PSEUDO_RULES_OFF_LUA
+  var b = 2 * Math.max(0, Math.round(Number(border) || 0))
+  Object.keys(sizes).sort().filter(function(cls) { return sizes[cls].length === 3 }).forEach(function(cls, i) {
+    var s = sizes[cls]
+    lua += "; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = \"hypr-session-pseudo-" + (i + 1)
+      + "\", match = { class = [==[^(" + regexEscape(cls) + ")$]==], initial_title = [==[^(" + regexEscape(s[2]) + ")$]==] }"
+      + ", pseudo = true, size = \"" + (s[0] + b) + " " + (s[1] + b) + "\" }))"
+  })
+  return lua
+}
+
+// Whether `client` opened through its app's rule (`rules`, the sizes the
+// rules in Hyprland were made from), so it is pseudotiled at the size already.
+function pseudoRuleOpened(rules, client) {
+  if (!client || client.floating) return false
+  var s = rules[client.class]
+  return !!s && s.length === 3 && client.initialTitle === s[2]
 }
 
 // An openwindow event's data, "ADDR,WORKSPACE,CLASS,TITLE": { address, class }.
@@ -695,6 +730,7 @@ if (typeof module !== "undefined" && module.exports) {
     windowAddress: windowAddress, parsePseudoSizes: parsePseudoSizes, serializePseudoSizes: serializePseudoSizes,
     pseudoFlipped: pseudoFlipped, pseudoOpened: pseudoOpened, anyPseudo: anyPseudo, pseudoTrack: pseudoTrack,
     pseudoOpenSize: pseudoOpenSize, openWindowEvent: openWindowEvent,
+    PSEUDO_RULES_OFF_LUA: PSEUDO_RULES_OFF_LUA, pseudoRulesLua: pseudoRulesLua, pseudoRuleOpened: pseudoRuleOpened,
     pressureTotals: pressureTotals, pressureLoad: pressureLoad, calm: calm
   }
 }

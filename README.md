@@ -39,6 +39,8 @@ Open **Saved apps** and switch off the apps that should not be saved or reopened
 
 Pseudotile a window with Super + P and resize it: when it closes, its app remembers that size, and the app's next tiled window opens pseudotiled at it. One size per app, kept across restarts. Closing the app's window after turning pseudotile off forgets the size. Floating windows and windows reopened by a restore are left alone.
 
+The app's main window (one with the same initial title as the window the size came from) opens at that size straight away, through a window rule the plugin keeps in Hyprland. Its other tiled windows open full size and shrink to it right after.
+
 The **Remember the Super + P size** switch in the panel turns it on or off (on by default), or from the terminal: `omarchy-shell hypr-session set rememberPseudoSize false`.
 
 Hyprland doesn't tell anyone that a window is pseudotiled, so Super + P has to tell the plugin which window it flipped. Put this in `~/.config/hypr/bindings.lua`; with the shell down, Super + P still pseudotiles as before:
@@ -89,3 +91,5 @@ Delete `~/.local/bin/hypr-session` and `~/.config/omarchy/hooks/post-boot.d/rest
 - A Super + P size changed less than about a second before closing the window may be missed.
 - If the tile shrank (another window opened next to it), the remembered size is the shrunken one.
 - Windows already pseudotiled before a shell restart are followed again only after the next Super + P.
+- A size remembered before this version has no main window yet: the app's windows still shrink after they open until one of them closes pseudotiled.
+- Removing the plugin leaves its Super + P rules in Hyprland until the next config reload.

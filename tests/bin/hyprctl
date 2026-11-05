@@ -10,7 +10,11 @@ case $1 in
   monitors) echo '[{"activeWorkspace":{"name":"1"},"specialWorkspace":{"name":""}}]' ;;
   activewindow) echo '{}' ;;
   cursorpos) echo '100, 100' ;;
-  getoption) printf 'float: 1.000000\nset: true\n' ;;
+  getoption)
+    case $* in
+      *' -j') printf '{"option": "%s", "int": 1, "set": true}\n' "$2" ;;
+      *) printf 'float: 1.000000\nset: true\n' ;;
+    esac ;;
   eval) ;;
   dispatch)
     case $2 in
