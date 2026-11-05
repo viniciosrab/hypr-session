@@ -13,8 +13,8 @@ Each app remembers the last size its window had in pseudotile (Super + P) and op
 
 ## Tasks
 
-- T1 S1-S6 Model rules + Service tracking/apply + IPC `pseudo` + panel switch + i18n + tests + README — inline — commit: pending
-- T2 S6 Super + P in ~/.config/hypr/bindings.lua (outside this repo) — inline — no commit (user config)
+- T1 S1-S6 Model rules + Service tracking/apply + IPC `pseudo` + panel switch + i18n + tests + README — inline (Service/Panel/README by gentle-ai-worker) — commit: d3dbfcc (49 unit + 5 qs files green, validate 0)
+- T2 S6 Super + P in ~/.config/hypr/bindings.lua (outside this repo) — inline — no commit (user config; backup bindings.lua.bak.<ts>, reload with no config errors, one SUPER+P bind)
 
 ## Log
 
@@ -25,3 +25,4 @@ Each app remembers the last size its window had in pseudotile (Super + P) and op
 - L5 Evidence (Hyprland 0.56.2 source): `persistent_size` only stores the size of floating windows on close (Window.cpp:2577); pseudo size lives on the layout target only (Target.hpp:84) and is lost on close; resizing a pseudotiled window changes its pseudo size by the delta, clamped to the tile (LayoutManager.cpp:61-76).
 - L6 Evidence (Hyprland 0.56.2 source): no runtime API exposes whether a window is pseudotiled. `hyprctl clients -j` has no pseudo field (HyprCtl.cpp:389-424; `size` is the shrunken box), the Lua window object has none (LuaWindow.cpp:70-245), and no IPC event fires on a pseudo toggle or resize (Target.cpp:80-101). Applying works: `hl.dsp.window.pseudo({ action = "enable", window = "address:..." })` then a resize, or a runtime `hl.window_rule{ name, match, pseudo = true, size }`. Open question to the user: how the plugin learns of Super + P.
 - L7 (user choice): "Super + P passa pelo plugin (recomendado)" over guessing from the window shape.
+- L8 Live check (shell restarted, no relaunch): test foot window on special:hstest, pseudo + `pseudo` IPC, resize to 700x450, close → sizes file {"hs-pseudo-test":[700,450]} mode 600; reopened window came back pseudotiled at 700x450; flipped off and closed → forgotten, file {}. Unit tests for the Model rules were written right after the rules, not before; the integration RED (pseudo.qml) was observed before Service.qml changed.
