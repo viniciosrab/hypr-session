@@ -506,6 +506,9 @@ test("a tiled window matching its app's rule opened pseudotiled already", () => 
   assert.equal(M.pseudoRuleOpened(rules, client("0x1", "foot", 1, 1, { initialTitle: "foot", floating: true })), false)
   assert.equal(M.pseudoRuleOpened(rules, client("0x1", "kitty", 1, 1, { initialTitle: "kitty" })), false)
   assert.equal(M.pseudoRuleOpened(rules, null), false)
+  // A hidden window shown again (an app reopened from the tray) maps without
+  // its rules: full tile size, so it still needs pseudotiling
+  assert.equal(M.pseudoRuleOpened(rules, client("0x1", "foot", 945, 558, { initialTitle: "foot" })), false)
 })
 
 test("openwindow event data gives the address and class", () => {

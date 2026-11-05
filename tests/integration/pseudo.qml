@@ -83,6 +83,22 @@ ShellRoot {
         return !!t && t.pseudo && t.size[0] === 700 && t.size[1] === 500 && t.title === "Main"
           && harness.waited > 1000 && !harness.called("address:0x2")
       } },
+    { name: "its main window shown again without the rule (from the tray) is pseudotiled right after",
+      run: function() { harness.setClients([["0x2", 700, 500], ["0x7", 1900, 1000]]); harness.service.onHyprEvent("openwindow", "7,2,fakeapp,Main") },
+      until: function() {
+        return harness.called('hl.dsp.window.pseudo({ action = "enable", window = "address:0x7" })')
+          && harness.called('hl.dsp.window.resize({ x = 700, y = 500, window = "address:0x7" })')
+          && harness.service.pseudoTracked["0x7"] && harness.service.pseudoTracked["0x7"].pseudo
+      } },
+    { name: "it is followed at the size it was given",
+      run: function() { harness.setClients([["0x2", 700, 500], ["0x7", 700, 500]]) },
+      until: function() { var t = harness.service.pseudoTracked["0x7"]; return t.size[0] === 700 && t.size[1] === 500 } },
+    { name: "closing it keeps the app's size",
+      run: function() { harness.setClients([["0x2", 700, 500]]); harness.service.onHyprEvent("closewindow", "7") },
+      until: function() {
+        readSizes.running = true
+        return !("0x7" in harness.service.pseudoTracked) && harness.sizesText.indexOf("700,\n    500,\n    \"Main\"") !== -1
+      } },
     { name: "another tiled window of the app is pseudotiled at that size right after it opens",
       run: function() { harness.setClients([["0x2", 700, 500], ["0x6", 1900, 1000, false, "Other"]]); harness.service.onHyprEvent("openwindow", "6,2,fakeapp,Other") },
       until: function() {
