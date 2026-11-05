@@ -73,6 +73,12 @@ Item {
   property bool pseudoLoaded: false
   property bool pseudoBusy: false
   property bool pseudoAgain: false
+  // The sizes the Super + P rules in Hyprland were made from, the Lua that
+  // made them ("" until sent, or after a config reload dropped them) and the
+  // queue that keeps one rule update at a time
+  property var pseudoRuleSizes: ({})
+  property string pseudoRulesSent: ""
+  property var pseudoRulesQueue: Promise.resolve()
 
   // ---- Plumbing: processes, timers, files -----------------------------------------
 
@@ -564,7 +570,8 @@ Item {
   function restore() {
     if (restoring) return Promise.resolve()
     restoring = true
-    return restoreOnce().then(function() { restoring = false }, function(e) {
+    // the Super + P rules go off first (onRestoringChanged): restored windows keep their size
+    return pseudoRulesQueue.then(restoreOnce).then(function() { restoring = false }, function(e) {
       restoring = false
       log("restore: failed: " + e)
     })
@@ -799,20 +806,64 @@ Item {
       var size = Model.pseudoOpenSize(pseudoSizes, client, settings)
       if (!size) return null
       var addr = ev.address
+      var title = pseudoSizes[client.class][2] || client.initialTitle
+      // The app's main window mapped through its rule, at the size already
+      if (Model.pseudoRuleOpened(pseudoRuleSizes, client)) {
+        size = pseudoRuleSizes[client.class].slice(0, 2)
+        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, size, title)
+        log("pseudo: opened " + client.class + " " + addr + " at " + size[0] + "x" + size[1] + " by rule")
+        return null
+      }
       return dispatch("hl.dsp.window.pseudo({ action = \"enable\", window = \"address:" + addr + "\" })").then(function() {
         return dispatch("hl.dsp.window.resize({ x = " + size[0] + ", y = " + size[1] + ", window = \"address:" + addr + "\" })")
       }).then(function() {
-        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, size)
+        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, size, title)
         log("pseudo: opened " + client.class + " " + addr + " at " + size[0] + "x" + size[1])
       })
     })
   }
+
+  // Keeps the Super + P rules in Hyprland in step with the sizes; none while
+  // the switch is off or a restore runs. Until Hyprland has the new rules,
+  // pseudoRuleSizes only lists the ones both old and new sets have.
+  function syncPseudoRules() {
+    pseudoRulesQueue = pseudoRulesQueue.then(function() {
+      var sizes = pseudoLoaded && settings.rememberPseudoSize && !restoring ? pseudoSizes : {}
+      var border = Object.keys(sizes).length ? hyprJson(["getoption", "general:border_size", "-j"]) : Promise.resolve(null)
+      return border.then(function(opt) {
+        var lua = Model.pseudoRulesLua(sizes, opt ? opt.int : 0)
+        if (lua === pseudoRulesSent) return null
+        var kept = {}
+        Object.keys(sizes).forEach(function(cls) {
+          if (JSON.stringify(sizes[cls]) === JSON.stringify(pseudoRuleSizes[cls])) kept[cls] = sizes[cls]
+        })
+        pseudoRuleSizes = kept
+        pseudoRulesSent = ""
+        return hypr(["eval", lua]).then(function(r) {
+          if (r.code !== 0 || /^error/.test(r.out)) throw new Error(r.out.trim() || "hyprctl eval failed")
+          pseudoRulesSent = lua
+          pseudoRuleSizes = JSON.parse(JSON.stringify(sizes))
+        })
+      })
+    }).then(null, function(e) { log("pseudo: rules failed: " + e) })
+    return pseudoRulesQueue
+  }
+
+  onPseudoSizesChanged: syncPseudoRules()
+  onPseudoLoadedChanged: syncPseudoRules()
+  onRestoringChanged: syncPseudoRules()
+  onSettingsChanged: syncPseudoRules()
 
   function onHyprEvent(name, data) {
     if (name === "closewindow") {
       if (settings.rememberPseudoSize && Object.keys(pseudoTracked).length > 0) trackPseudo()
     } else if (name === "openwindow") {
       pseudoOpen(data).then(null, function(e) { log("pseudo: failed: " + e) })
+    } else if (name === "configreloaded") {
+      // A reload drops the rules made at runtime, also one being sent now
+      pseudoRuleSizes = {}
+      pseudoRulesQueue = pseudoRulesQueue.then(function() { pseudoRulesSent = ""; pseudoRuleSizes = {} })
+      syncPseudoRules()
     }
   }
 

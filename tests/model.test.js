@@ -470,6 +470,44 @@ test("a new window opens at its app's size only when on, known and tiled", () =>
   assert.equal(M.pseudoOpenSize(sizes, null, on), null)
 })
 
+test("pseudo sizes file: a size may carry the initial title of its app's main window", () => {
+  assert.deepEqual(M.parsePseudoSizes(JSON.stringify({ foot: [800, 600, "foot"], empty: [3, 2, ""], num: [3, 2, 7], long: [1, 1, "a", "b"] })),
+    { foot: [800, 600, "foot"], empty: [3, 2], num: [3, 2] })
+  assert.deepEqual(M.pseudoOpenSize({ foot: [800, 600, "foot"] }, client("0x1", "foot", 1, 1), M.defaultSettings()), [800, 600])
+})
+
+test("a remembered size keeps the initial title of the window it came from", () => {
+  let r = M.pseudoTrack(M.pseudoFlipped({}, "0x1"), {}, [client("0x1", "foot", 900, 700, { initialTitle: "foot" })])
+  assert.deepEqual(r.tracked["0x1"], { pseudo: true, class: "foot", size: [900, 700], title: "foot" })
+  r = M.pseudoTrack(r.tracked, {}, [])
+  assert.deepEqual(r.sizes, { foot: [900, 700, "foot"] })
+  assert.equal(r.changed, true)
+  assert.deepEqual(M.pseudoOpened({}, "0x2", "foot", [7, 5], "foot"), { "0x2": { pseudo: true, class: "foot", size: [7, 5], title: "foot" } })
+  // A window the plugin opened keeps its app's main title, whatever its own
+  r = M.pseudoTrack(M.pseudoOpened({}, "0x3", "foot", [7, 5], "foot"), {}, [client("0x3", "foot", 7, 5, { initialTitle: "other" })])
+  assert.equal(r.tracked["0x3"].title, "foot")
+})
+
+test("each app with a titled size gets a rule opening its main window pseudotiled at it", () => {
+  assert.equal(M.PSEUDO_RULES_OFF_LUA,
+    "for _, r in ipairs(_G.hypr_session_pseudo_rules or {}) do r:set_enabled(false) end; _G.hypr_session_pseudo_rules = {}")
+  // The rule's size counts the border on both sides: the window itself ends at [w, h]
+  const lua = M.pseudoRulesLua({ foot: [800, 600, "foot"], kitty: [700, 500], "a.b": [300, 200, "Tab (1) ]==] x"] }, 2)
+  assert.equal(lua, M.PSEUDO_RULES_OFF_LUA
+    + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-1", match = { class = [==[^(a\\.b)$]==], initial_title = [==[^(Tab \\(1\\) \\]==\\] x)$]==] }, pseudo = true, size = "304 204" }))'
+    + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-2", match = { class = [==[^(foot)$]==], initial_title = [==[^(foot)$]==] }, pseudo = true, size = "804 604" }))')
+  assert.equal(M.pseudoRulesLua({ kitty: [700, 500] }, 1), M.PSEUDO_RULES_OFF_LUA)
+})
+
+test("a tiled window matching its app's rule opened pseudotiled already", () => {
+  const rules = { foot: [800, 600, "foot"], kitty: [700, 500] }
+  assert.equal(M.pseudoRuleOpened(rules, client("0x1", "foot", 800, 600, { initialTitle: "foot" })), true)
+  assert.equal(M.pseudoRuleOpened(rules, client("0x1", "foot", 1, 1, { initialTitle: "other" })), false)
+  assert.equal(M.pseudoRuleOpened(rules, client("0x1", "foot", 1, 1, { initialTitle: "foot", floating: true })), false)
+  assert.equal(M.pseudoRuleOpened(rules, client("0x1", "kitty", 1, 1, { initialTitle: "kitty" })), false)
+  assert.equal(M.pseudoRuleOpened(rules, null), false)
+})
+
 test("openwindow event data gives the address and class", () => {
   assert.deepEqual(M.openWindowEvent("55d0c,2,foot,~/src, a title"), { address: "0x55d0c", class: "foot" })
   assert.equal(M.openWindowEvent("zz,2,foot,t"), null)
