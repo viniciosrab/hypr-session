@@ -593,10 +593,12 @@ function pseudoRulesLua(sizes, border) {
 
 // Whether `client` opened through its app's rule (`rules`, the sizes the
 // rules in Hyprland were made from), so it is pseudotiled at the size already.
+// It must be at that size too: a hidden window shown again (an app reopened
+// from the tray) keeps its address and maps without its rules.
 function pseudoRuleOpened(rules, client) {
-  if (!client || client.floating) return false
+  if (!client || client.floating || !client.size) return false
   var s = rules[client.class]
-  return !!s && s.length === 3 && client.initialTitle === s[2]
+  return !!s && s.length === 3 && client.initialTitle === s[2] && client.size[0] === s[0] && client.size[1] === s[1]
 }
 
 // An openwindow event's data, "ADDR,WORKSPACE,CLASS,TITLE": { address, class }.
