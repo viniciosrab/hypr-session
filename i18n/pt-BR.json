@@ -31,6 +31,8 @@
   "option.restoreOnStart": "Reabrir apps ao ligar",
   "option.rearrangeLayout": "Refazer o layout das janelas",
   "option.resumeAgents": "Retomar Claude, Codex e pi",
+  "panel.onOpen": "Ao abrir apps",
+  "option.rememberPseudoSize": "Lembrar o tamanho do Super + P",
   "panel.savedApps": "Apps salvos",
   "panel.savedCount": "%1 de %2"
 }

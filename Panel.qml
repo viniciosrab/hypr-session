@@ -9,7 +9,8 @@ import "Model.js" as Model
 //   1. Is my session saved?  One line, with the autosave switch next to it.
 //   2. Save / restore now.
 //   3. How a restore behaves: three slim switches.
-//   4. Which apps are saved: one collapsed line, real app names when opened.
+//   4. How new windows open: remember the Super + P size.
+//   5. Which apps are saved: one collapsed line, real app names when opened.
 // A thin front end to Service.qml, which owns the state and does the work.
 Panel {
   id: root
@@ -58,6 +59,7 @@ Panel {
     { key: "rearrangeLayout", label: tr.t("option.rearrangeLayout") },
     { key: "resumeAgents", label: tr.t("option.resumeAgents") }
   ]
+  readonly property var openOption: ({ key: "rememberPseudoSize", label: tr.t("option.rememberPseudoSize") })
 
   function open() {
     now = Date.now()
@@ -225,7 +227,25 @@ Panel {
 
         PanelSeparator { width: parent.width }
 
-        // 4. Which apps are saved, collapsed to one line
+        // 4. How new windows open
+        Column {
+          width: parent.width
+          spacing: Style.space(8)
+          PanelSectionHeader {
+            text: tr.t("panel.onOpen")
+            foreground: root.fg
+            fontFamily: root.fontName
+          }
+          SwitchRow {
+            label: root.openOption.label
+            checked: root.prefs[root.openOption.key] === true
+            onToggled: if (root.service) root.service.setSetting(root.openOption.key, !checked)
+          }
+        }
+
+        PanelSeparator { width: parent.width }
+
+        // 5. Which apps are saved, collapsed to one line
         Column {
           width: parent.width
           spacing: Style.space(8)
