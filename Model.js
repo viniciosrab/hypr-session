@@ -22,7 +22,7 @@ var ENV_SKIP = /^(_|PATH|PWD|OLDPWD|SHLVL|INVOCATION_ID|JOURNAL_STREAM|SYSTEMD_E
 // ---- Settings ---------------------------------------------------------------
 
 function defaultSettings() {
-  return { restoreOnStart: true, autoSave: true, rearrangeLayout: true, resumeAgents: true, ignored: [] }
+  return { restoreOnStart: true, autoSave: true, rearrangeLayout: true, resumeAgents: true, rememberPseudoSize: true, ignored: [] }
 }
 
 function parseSettings(text) {
@@ -30,7 +30,7 @@ function parseSettings(text) {
   var raw
   try { raw = JSON.parse(text) } catch (e) { return out }
   if (!raw || typeof raw !== "object") return out
-  ;["restoreOnStart", "autoSave", "rearrangeLayout", "resumeAgents"].forEach(function(key) {
+  ;["restoreOnStart", "autoSave", "rearrangeLayout", "resumeAgents", "rememberPseudoSize"].forEach(function(key) {
     if (typeof raw[key] === "boolean") out[key] = raw[key]
   })
   if (Array.isArray(raw.ignored)) {
@@ -477,6 +477,100 @@ function logLine(now, message) {
     + pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds()) + " " + message + "\n"
 }
 
+// ---- Pseudotile sizes -------------------------------------------------------
+//
+// Hyprland tells nobody whether a window is pseudotiled (Super + P): no
+// hyprctl field, no event. The Super + P bind tells the plugin which window
+// it flipped, the plugin follows that window's size while it is open, and
+// when it closes the app's size is remembered (or forgotten, when the window
+// was no longer pseudotiled). A new window of that app opens pseudotiled at
+// that size.
+
+// "55d0c", "0x55d0c" or "0X55D0C" -> "0x55d0c"; "" for anything else.
+function windowAddress(text) {
+  var m = /^(?:0x)?([0-9a-f]+)$/i.exec(String(text || "").trim())
+  return m ? "0x" + m[1].toLowerCase() : ""
+}
+
+// The sizes file, { class: [w, h] }, without anything malformed.
+function parsePseudoSizes(text) {
+  var out = {}
+  var raw
+  try { raw = JSON.parse(text) } catch (e) { return out }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out
+  Object.keys(raw).forEach(function(cls) {
+    var s = raw[cls]
+    if (cls !== "" && Array.isArray(s) && s.length === 2 && s.every(function(n) { return typeof n === "number" && n > 0 }))
+      out[cls] = [Math.round(s[0]), Math.round(s[1])]
+  })
+  return out
+}
+
+function serializePseudoSizes(sizes) { return JSON.stringify(sizes, null, 2) + "\n" }
+
+// Super + P flipped window `addr`: { addr: { pseudo, class, size } }.
+function pseudoFlipped(tracked, addr) {
+  var next = JSON.parse(JSON.stringify(tracked))
+  var t = next[addr] || { pseudo: false, class: "", size: null }
+  t.pseudo = !t.pseudo
+  next[addr] = t
+  return next
+}
+
+// A window the plugin itself opened pseudotiled.
+function pseudoOpened(tracked, addr, cls, size) {
+  var next = JSON.parse(JSON.stringify(tracked))
+  next[addr] = { pseudo: true, class: cls, size: size.slice() }
+  return next
+}
+
+function anyPseudo(tracked) {
+  return Object.keys(tracked).some(function(a) { return tracked[a].pseudo })
+}
+
+// Follows the tracked windows in `clients`. A pseudotiled one keeps its
+// size while tiled (floating or fullscreen it is not its pseudo size). One
+// gone from `clients` closed: its app keeps that size, or loses it when the
+// window was no longer pseudotiled. Returns { tracked, sizes, changed }.
+function pseudoTrack(tracked, sizes, clients) {
+  var nextTracked = {}
+  var nextSizes = JSON.parse(JSON.stringify(sizes))
+  var changed = false
+  var byAddr = {}
+  ;(clients || []).forEach(function(c) { byAddr[windowAddress(c.address)] = c })
+  Object.keys(tracked).forEach(function(addr) {
+    var t = JSON.parse(JSON.stringify(tracked[addr]))
+    var c = byAddr[addr]
+    if (c) {
+      t.class = c.class || t.class
+      if (t.pseudo && !c.floating && !c.fullscreen && c.size && c.size[0] > 0 && c.size[1] > 0) t.size = [c.size[0], c.size[1]]
+      nextTracked[addr] = t
+      return
+    }
+    if (!t.class) return
+    var before = JSON.stringify(nextSizes[t.class] || null)
+    if (t.pseudo && t.size) nextSizes[t.class] = [Math.round(t.size[0]), Math.round(t.size[1])]
+    else delete nextSizes[t.class]
+    if (JSON.stringify(nextSizes[t.class] || null) !== before) changed = true
+  })
+  return { tracked: nextTracked, sizes: nextSizes, changed: changed }
+}
+
+// The size a new window should open at, pseudotiled: [w, h], or null when
+// the feature is off, its app has no size, or it opened floating.
+function pseudoOpenSize(sizes, client, settings) {
+  if (!settings.rememberPseudoSize || !client || client.floating) return null
+  var s = sizes[client.class]
+  return s ? s.slice() : null
+}
+
+// An openwindow event's data, "ADDR,WORKSPACE,CLASS,TITLE": { address, class }.
+function openWindowEvent(data) {
+  var parts = String(data || "").split(",")
+  var address = windowAddress(parts[0])
+  return address && parts.length >= 3 ? { address: address, class: parts[2] } : null
+}
+
 // ---- Debounce ---------------------------------------------------------------
 
 // Seconds to wait after a Hyprland event before saving; null when the event
@@ -598,6 +692,9 @@ if (typeof module !== "undefined" && module.exports) {
     parseDesktopIndex: parseDesktopIndex, appNames: appNames, appName: appName,
     relativeTime: relativeTime, fill: fill, appCount: appCount, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
     shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay,
+    windowAddress: windowAddress, parsePseudoSizes: parsePseudoSizes, serializePseudoSizes: serializePseudoSizes,
+    pseudoFlipped: pseudoFlipped, pseudoOpened: pseudoOpened, anyPseudo: anyPseudo, pseudoTrack: pseudoTrack,
+    pseudoOpenSize: pseudoOpenSize, openWindowEvent: openWindowEvent,
     pressureTotals: pressureTotals, pressureLoad: pressureLoad, calm: calm
   }
 }

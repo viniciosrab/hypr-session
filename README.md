@@ -35,6 +35,26 @@ Click the bar icon to see when the session was last saved and restored, and to s
 
 Open **Saved apps** and switch off the apps that should not be saved or reopened.
 
+## Remember the Super + P size
+
+Pseudotile a window with Super + P and resize it: when it closes, its app remembers that size, and the app's next tiled window opens pseudotiled at it. One size per app, kept across restarts. Closing the app's window after turning pseudotile off forgets the size. Floating windows and windows reopened by a restore are left alone.
+
+The **Remember the Super + P size** switch in the panel turns it on or off (on by default), or from the terminal: `omarchy-shell hypr-session set rememberPseudoSize false`.
+
+Hyprland doesn't tell anyone that a window is pseudotiled, so Super + P has to tell the plugin which window it flipped. Put this in `~/.config/hypr/bindings.lua`; with the shell down, Super + P still pseudotiles as before:
+
+```lua
+-- Super + P: pseudotile at once, then tell hypr-session which window flipped
+local function pseudo_window()
+  local w = hl.get_active_window()
+  hl.dispatch(hl.dsp.window.pseudo())
+  if w then hl.dispatch(hl.dsp.exec_cmd("omarchy-shell -q hypr-session pseudo " .. w.address)) end
+end
+o.bind_commands[pseudo_window] = "hyprctl dispatch 'hl.dsp.window.pseudo()'"
+hl.unbind("SUPER + P")
+o.bind("SUPER + P", "Pseudo window", pseudo_window)
+```
+
 ## Language
 
 The panel, the tooltip and `status` follow the language picked under Omarchy's **Setup > Language**, and switch along with it without a restart. English and Brazilian Portuguese ship today; any other language shows English. To add one, copy `i18n/en.json` to `i18n/<code>.json` (the code Omarchy uses, like `de` or `es-MX`) and translate the values.
@@ -45,11 +65,13 @@ The panel, the tooltip and `status` follow the language picked under Omarchy's *
 omarchy-shell hypr-session save | restore | status
 omarchy-shell hypr-session set autoSave false
 omarchy-shell hypr-session ignore <class>      # or unignore
+omarchy-shell hypr-session pseudo <address>    # Super + P flipped this window (see above)
 ```
 
 ## Files
 
 - `~/.local/state/hypr-session.json`: the saved session
+- `~/.local/state/hypr-session.sizes.json`: the Super + P size of each app
 - `~/.local/state/hypr-session.log`: what was saved and restored, useful when something doesn't come back right
 
 ## Coming from the script version
@@ -63,3 +85,7 @@ Delete `~/.local/bin/hypr-session` and `~/.config/omarchy/hooks/post-boot.d/rest
 - Only the dwindle layout is rebuilt.
 - An app that closed into the tray (like Discord) stays saved only if its window was seen since the shell started.
 - If the shell restarts in the middle of a restore, it doesn't start over on its own. Use **Restore now**.
+- The Super + P size is one per app, not per window.
+- A Super + P size changed less than about a second before closing the window may be missed.
+- If the tile shrank (another window opened next to it), the remembered size is the shrunken one.
+- Windows already pseudotiled before a shell restart are followed again only after the next Super + P.

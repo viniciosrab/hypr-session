@@ -18,6 +18,8 @@ import "Model.js" as Model
 //   ~/.local/state/hypr-session.json           saved session
 //   ~/.local/state/hypr-session.restored.json  what the last boot restored
 //   ~/.local/state/hypr-session.log            what happened
+// and, for the Super + P sizes (see Model.pseudoTrack):
+//   ~/.local/state/hypr-session.sizes.json     { class: [w, h] }
 Item {
   id: root
 
@@ -29,6 +31,7 @@ Item {
   readonly property string statePath: Quickshell.env("HYPR_SESSION_FILE") || (stateDir + "/hypr-session.json")
   readonly property string restoredPath: statePath.replace(/\.json$/, "") + ".restored.json"
   readonly property string logPath: statePath.replace(/\.json$/, "") + ".log"
+  readonly property string pseudoSizesPath: statePath.replace(/\.json$/, "") + ".sizes.json"
   readonly property string settingsDir: home + "/.local/state/omarchy/settings"
   readonly property string settingsPath: settingsDir + "/hypr-session.json"
   readonly property string markerPath: Quickshell.env("HYPR_SESSION_MARKER") || ((Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/hypr-session.restored."
@@ -63,6 +66,13 @@ Item {
   // Per class, the entry last saved with its pid and raw cmdline, to keep
   // apps that closed their window but still run (see Model.keepRunning)
   property var remembered: ({})
+  // Super + P: the size each app last had pseudotiled, { class: [w, h] },
+  // and the windows followed now, { addr: { pseudo, class, size } }
+  property var pseudoSizes: ({})
+  property var pseudoTracked: ({})
+  property bool pseudoLoaded: false
+  property bool pseudoBusy: false
+  property bool pseudoAgain: false
 
   // ---- Plumbing: processes, timers, files -----------------------------------------
 
@@ -169,6 +179,7 @@ Item {
   function protect(paths) { return run(["chmod", "600"].concat(paths)) }
   FileView { id: stateWriter; path: root.statePath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
   FileView { id: restoredWriter; path: root.restoredPath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
+  FileView { id: pseudoSizesWriter; path: root.pseudoSizesPath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
   FileView { id: settingsWriter; path: root.settingsPath; atomicWrites: true; printErrors: false }
 
   // ---- Settings -----------------------------------------------------------------
@@ -719,6 +730,102 @@ Item {
     }).then(function() { return allOff })
   }
 
+  // ---- Super + P sizes --------------------------------------------------------------------
+
+  // Super + P flipped window `address` (the bind tells us: Hyprland doesn't)
+  function pseudoToggled(address) {
+    if (!settings.rememberPseudoSize) return
+    var addr = Model.windowAddress(address)
+    if (!addr) return
+    pseudoTracked = Model.pseudoFlipped(pseudoTracked, addr)
+    trackPseudo()
+  }
+
+  function trackPseudoOnce() {
+    // Windows tracked after the clients were read are not in them yet: keep
+    // those as they are instead of taking them for closed
+    var known = Object.keys(pseudoTracked)
+    return hyprJson(["clients", "-j"]).then(function(clients) {
+      if (!clients) return null
+      var old = {}
+      var fresh = {}
+      Object.keys(root.pseudoTracked).forEach(function(a) {
+        (known.indexOf(a) !== -1 ? old : fresh)[a] = root.pseudoTracked[a]
+      })
+      var before = root.pseudoSizes
+      var r = Model.pseudoTrack(old, before, clients)
+      Object.keys(fresh).forEach(function(a) { r.tracked[a] = fresh[a] })
+      root.pseudoTracked = r.tracked
+      root.pseudoSizes = r.sizes
+      if (!r.changed) return null
+      Object.keys(before).concat(Object.keys(r.sizes)).forEach(function(cls, i, all) {
+        if (all.indexOf(cls) !== i || JSON.stringify(before[cls] || null) === JSON.stringify(r.sizes[cls] || null)) return
+        log(cls in r.sizes ? "pseudo: " + cls + " " + r.sizes[cls][0] + "x" + r.sizes[cls][1] : "pseudo: " + cls + " forgotten")
+      })
+      var text = Model.serializePseudoSizes(r.sizes)
+      return run(["mkdir", "-p", stateDir]).then(function() { pseudoSizesWriter.setText(text) })
+    })
+  }
+
+  // Follows the tracked windows, and remembers or forgets the app of one gone
+  function trackPseudo() {
+    if (!pseudoLoaded) return Promise.resolve()
+    if (pseudoBusy) { pseudoAgain = true; return Promise.resolve() }
+    pseudoBusy = true
+    return trackPseudoOnce().then(null, function(e) { log("pseudo: failed: " + e) }).then(function() {
+      pseudoBusy = false
+      if (pseudoAgain) { pseudoAgain = false; trackPseudo() }
+    })
+  }
+
+  // A new tiled window of an app with a remembered size opens pseudotiled at it
+  function pseudoOpen(data) {
+    if (!settings.rememberPseudoSize || restoring) return Promise.resolve()
+    var ev = Model.openWindowEvent(data)
+    if (!ev || !(ev.class in pseudoSizes) || ev.address in pseudoTracked) return Promise.resolve()
+    var client = null
+    var tries = 0
+    // The window may not be listed yet when the event arrives
+    return loop(function() {
+      if (client || tries >= 5) return false
+      return (tries++ ? sleep(200) : Promise.resolve()).then(function() {
+        return hyprJson(["clients", "-j"])
+      }).then(function(clients) {
+        client = (clients || []).filter(function(c) { return Model.windowAddress(c.address) === ev.address })[0] || null
+        return true
+      })
+    }).then(function() {
+      if (restoring) return null
+      var size = Model.pseudoOpenSize(pseudoSizes, client, settings)
+      if (!size) return null
+      var addr = ev.address
+      return dispatch("hl.dsp.window.pseudo({ action = \"enable\", window = \"address:" + addr + "\" })").then(function() {
+        return dispatch("hl.dsp.window.resize({ x = " + size[0] + ", y = " + size[1] + ", window = \"address:" + addr + "\" })")
+      }).then(function() {
+        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, size)
+        log("pseudo: opened " + client.class + " " + addr + " at " + size[0] + "x" + size[1])
+      })
+    })
+  }
+
+  function onHyprEvent(name, data) {
+    if (name === "closewindow") {
+      if (settings.rememberPseudoSize && Object.keys(pseudoTracked).length > 0) trackPseudo()
+    } else if (name === "openwindow") {
+      pseudoOpen(data).then(null, function(e) { log("pseudo: failed: " + e) })
+    }
+  }
+
+  // No event fires on a pseudotiled resize: look every second while a
+  // tracked window is open (a no-longer-pseudotiled one still has to be seen
+  // closing, to forget its app's size)
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root.pseudoLoaded && root.settings.rememberPseudoSize && Object.keys(root.pseudoTracked).length > 0
+    onTriggered: root.trackPseudo()
+  }
+
   // ---- Watching -------------------------------------------------------------------------
 
   function onWindowEvent(name) {
@@ -739,7 +846,11 @@ Item {
 
   Connections {
     target: Hyprland
-    function onRawEvent(event) { root.onWindowEvent(String(event && event.name ? event.name : "")) }
+    function onRawEvent(event) {
+      var name = String(event && event.name ? event.name : "")
+      root.onWindowEvent(name)
+      root.onHyprEvent(name, String(event && event.data ? event.data : ""))
+    }
   }
 
   Timer {
@@ -767,7 +878,13 @@ Item {
     loadAppNames()
     // A restore cut short by a shell restart left its window rules on
     return rulesOff().then(function() {
-      return protect([statePath, restoredPath])
+      return protect([statePath, restoredPath, pseudoSizesPath])
+    }).then(function() {
+      return run(["cat", pseudoSizesPath])
+    }).then(function(sizes) {
+      if (sizes.code === 0) pseudoSizes = Model.parsePseudoSizes(sizes.out)
+      pseudoLoaded = true
+      if (Object.keys(pseudoTracked).length > 0) trackPseudo()
     }).then(function() {
       return run(["cat", statePath])
     }).then(function(cat) {
@@ -813,8 +930,9 @@ Item {
     function status(): string { return JSON.stringify(root.statusPayload()) }
     function set(key: string, value: string): string {
       return root.setSetting(key, value === "true" || value === "on" || value === "1")
-        ? "ok" : "error: options are restoreOnStart, autoSave, rearrangeLayout, resumeAgents"
+        ? "ok" : "error: options are restoreOnStart, autoSave, rearrangeLayout, resumeAgents, rememberPseudoSize"
     }
+    function pseudo(address: string): string { root.pseudoToggled(address); return "ok" }
     function ignore(cls: string): string { root.setIgnored(cls, true); return "ok" }
     function unignore(cls: string): string { root.setIgnored(cls, false); return "ok" }
   }

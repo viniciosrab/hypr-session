@@ -56,7 +56,7 @@ ShellRoot {
       until: function() {
         var p = harness.panel
         return p && p.opened && p.heroTitle === "Session saved" && p.heroMeta === "now · 1 app"
-          && p.options.length === 3 && p.appsExpanded === false && p.restoreLine === ""
+          && p.options.length === 3 && p.openOption.label === "Remember the Super + P size" && p.appsExpanded === false && p.restoreLine === ""
       } },
     { name: "apps show the program name when no launcher knows the class, all saved",
       until: function() { return harness.names().indexOf("sleep") !== -1 && harness.panel.savedCount === harness.panel.apps.length } },
@@ -80,6 +80,7 @@ ShellRoot {
         return p.heroTitle === "Sessão salva" && p.heroMeta === "agora · 1 app"
           && p.restoreLine === "Restaurada agora · 1 de 2 janelas voltaram"
           && p.options[0].label === "Reabrir apps ao ligar"
+          && p.openOption.label === "Lembrar o tamanho do Super + P"
       } },
     { name: "pausing autosave changes the headline and dims the bar icon",
       run: function() { harness.service.setSetting("autoSave", false) },

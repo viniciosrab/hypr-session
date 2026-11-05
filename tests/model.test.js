@@ -11,7 +11,8 @@ function rect(addr, x, y, w, h) { return { addr, x, y, w, h } }
 test("settings default to everything on, tolerate junk, and keep unique ignored classes", () => {
   assert.deepEqual(M.parseSettings("not json"), M.defaultSettings())
   assert.deepEqual(M.parseSettings(JSON.stringify({ autoSave: false, resumeAgents: "no", ignored: ["a", "a", 3, ""] })),
-    { restoreOnStart: true, autoSave: false, rearrangeLayout: true, resumeAgents: true, ignored: ["a"] })
+    { restoreOnStart: true, autoSave: false, rearrangeLayout: true, resumeAgents: true, rememberPseudoSize: true, ignored: ["a"] })
+  assert.equal(M.parseSettings(JSON.stringify({ rememberPseudoSize: false })).rememberPseudoSize, false)
   const s = M.withIgnored(M.defaultSettings(), "foo", true)
   assert.deepEqual(s.ignored, ["foo"])
   assert.deepEqual(M.withIgnored(s, "foo", false).ignored, [])
@@ -393,4 +394,84 @@ test("calm needs cpu < 0.30, io < 0.20 and memory < 0.10; a missing file is calm
   assert.equal(M.calm({ cpu: 0, io: 0.20, memory: 0 }), false)
   assert.equal(M.calm({ cpu: 0, io: 0, memory: 0.10 }), false)
   assert.equal(M.calm({ cpu: null, io: null, memory: null }), true)
+})
+
+function client(address, cls, w, h, extra) {
+  return Object.assign({ address, class: cls, size: [w, h], floating: false, fullscreen: 0 }, extra || {})
+}
+
+test("window addresses normalize to lowercase 0x hex, junk to empty", () => {
+  assert.equal(M.windowAddress("55D0c"), "0x55d0c")
+  assert.equal(M.windowAddress("0x55d0c"), "0x55d0c")
+  assert.equal(M.windowAddress(" 0X1f "), "0x1f")
+  assert.equal(M.windowAddress("address:0x1"), "")
+  assert.equal(M.windowAddress(undefined), "")
+})
+
+test("pseudo sizes file: keeps positive [w, h] per class, drops the rest", () => {
+  assert.deepEqual(M.parsePseudoSizes("not json"), {})
+  assert.deepEqual(M.parsePseudoSizes("[1, 2]"), {})
+  assert.deepEqual(M.parsePseudoSizes(JSON.stringify({ foot: [800.4, 600], bad: [0, 5], short: [1], text: ["1", 2], "": [1, 1] })), { foot: [800, 600] })
+  assert.equal(M.serializePseudoSizes({ foot: [800, 600] }), '{\n  "foot": [\n    800,\n    600\n  ]\n}\n')
+})
+
+test("Super + P flips a window, the plugin's own opens start pseudotiled", () => {
+  let t = M.pseudoFlipped({}, "0x1")
+  assert.deepEqual(t, { "0x1": { pseudo: true, class: "", size: null } })
+  assert.equal(M.anyPseudo(t), true)
+  t = M.pseudoFlipped(t, "0x1")
+  assert.equal(t["0x1"].pseudo, false)
+  assert.equal(M.anyPseudo(t), false)
+  const o = M.pseudoOpened({}, "0x2", "foot", [700, 500])
+  assert.deepEqual(o, { "0x2": { pseudo: true, class: "foot", size: [700, 500] } })
+})
+
+test("a pseudotiled window follows its tiled size and leaves it to its app when it closes", () => {
+  let t = M.pseudoFlipped({}, "0x1")
+  let r = M.pseudoTrack(t, {}, [client("0x1", "foot", 900, 700), client("0x9", "other", 10, 10)])
+  assert.deepEqual(r.tracked, { "0x1": { pseudo: true, class: "foot", size: [900, 700] } })
+  assert.equal(r.changed, false)
+  // Floating or fullscreen, the size on screen is not its pseudo size
+  r = M.pseudoTrack(r.tracked, {}, [client("0x1", "foot", 1900, 1000, { fullscreen: 1 })])
+  assert.deepEqual(r.tracked["0x1"].size, [900, 700])
+  r = M.pseudoTrack(r.tracked, {}, [client("0x1", "foot", 400, 300, { floating: true })])
+  assert.deepEqual(r.tracked["0x1"].size, [900, 700])
+  r = M.pseudoTrack(r.tracked, { kitty: [1, 1] }, [])
+  assert.deepEqual(r, { tracked: {}, sizes: { kitty: [1, 1], foot: [900, 700] }, changed: true })
+})
+
+test("a window closed no longer pseudotiled makes its app forget the size", () => {
+  let t = M.pseudoFlipped(M.pseudoOpened({}, "0x1", "foot", [800, 600]), "0x1")
+  let r = M.pseudoTrack(t, { foot: [800, 600] }, [client("0x1", "foot", 1900, 1000)])
+  assert.equal(r.tracked["0x1"].pseudo, false)
+  r = M.pseudoTrack(r.tracked, r.sizes, [])
+  assert.deepEqual(r.sizes, {})
+  assert.equal(r.changed, true)
+})
+
+test("closing with the same size or an untracked window changes nothing", () => {
+  const t = M.pseudoOpened({}, "0x1", "foot", [800, 600])
+  const r = M.pseudoTrack(t, { foot: [800, 600] }, [])
+  assert.deepEqual(r.sizes, { foot: [800, 600] })
+  assert.equal(r.changed, false)
+  // Flipped and closed before any poll saw its class: nothing to remember
+  const u = M.pseudoTrack(M.pseudoFlipped({}, "0x5"), { foot: [800, 600] }, [])
+  assert.deepEqual(u, { tracked: {}, sizes: { foot: [800, 600] }, changed: false })
+})
+
+test("a new window opens at its app's size only when on, known and tiled", () => {
+  const sizes = { foot: [800, 600] }
+  const on = M.defaultSettings()
+  const off = M.parseSettings(JSON.stringify({ rememberPseudoSize: false }))
+  assert.deepEqual(M.pseudoOpenSize(sizes, client("0x1", "foot", 1, 1), on), [800, 600])
+  assert.equal(M.pseudoOpenSize(sizes, client("0x1", "foot", 1, 1), off), null)
+  assert.equal(M.pseudoOpenSize(sizes, client("0x1", "kitty", 1, 1), on), null)
+  assert.equal(M.pseudoOpenSize(sizes, client("0x1", "foot", 1, 1, { floating: true }), on), null)
+  assert.equal(M.pseudoOpenSize(sizes, null, on), null)
+})
+
+test("openwindow event data gives the address and class", () => {
+  assert.deepEqual(M.openWindowEvent("55d0c,2,foot,~/src, a title"), { address: "0x55d0c", class: "foot" })
+  assert.equal(M.openWindowEvent("zz,2,foot,t"), null)
+  assert.equal(M.openWindowEvent("55d0c"), null)
 })
