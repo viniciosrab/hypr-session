@@ -19,7 +19,7 @@ import "Model.js" as Model
 //   ~/.local/state/hypr-session.restored.json  what the last boot restored
 //   ~/.local/state/hypr-session.log            what happened
 // and, for the Super + P sizes (see Model.pseudoTrack):
-//   ~/.local/state/hypr-session.sizes.json     { class: [w, h] }
+//   ~/.local/state/hypr-session.sizes.json     { class: { alone: [w, h], shared: [w, h] } }
 Item {
   id: root
 
@@ -66,8 +66,9 @@ Item {
   // Per class, the entry last saved with its pid and raw cmdline, to keep
   // apps that closed their window but still run (see Model.keepRunning)
   property var remembered: ({})
-  // Super + P: the size each app last had pseudotiled, { class: [w, h] },
-  // and the windows followed now, { addr: { pseudo, class, size } }
+  // Super + P: the size each app last had pseudotiled, per context,
+  // { class: { alone, shared } }, and the windows followed now,
+  // { addr: { pseudo, class, sizes, last } }
   property var pseudoSizes: ({})
   property var pseudoTracked: ({})
   property bool pseudoLoaded: false
@@ -766,8 +767,13 @@ Item {
       root.pseudoSizes = r.sizes
       if (!r.changed) return null
       Object.keys(before).concat(Object.keys(r.sizes)).forEach(function(cls, i, all) {
-        if (all.indexOf(cls) !== i || JSON.stringify(before[cls] || null) === JSON.stringify(r.sizes[cls] || null)) return
-        log(cls in r.sizes ? "pseudo: " + cls + " " + r.sizes[cls][0] + "x" + r.sizes[cls][1] : "pseudo: " + cls + " forgotten")
+        if (all.indexOf(cls) !== i) return
+        ;["alone", "shared"].forEach(function(ctx) {
+          var was = (before[cls] || {})[ctx]
+          var now = (r.sizes[cls] || {})[ctx]
+          if (JSON.stringify(was || null) === JSON.stringify(now || null)) return
+          log("pseudo: " + cls + " " + ctx + " " + (now ? now[0] + "x" + now[1] : "forgotten"))
+        })
       })
       var text = Model.serializePseudoSizes(r.sizes)
       return run(["mkdir", "-p", stateDir]).then(function() { pseudoSizesWriter.setText(text) })
@@ -785,8 +791,9 @@ Item {
     })
   }
 
-  // A new tiled window of an app with a remembered size opens pseudotiled at
-  // it, unless another tiled window shares its workspace
+  // A new tiled window of an app with a remembered size for the context it
+  // opens in (alone on its workspace or beside a tiled window) opens
+  // pseudotiled at it; with none for that context it tiles
   function pseudoOpen(data) {
     if (!settings.rememberPseudoSize || restoring) return Promise.resolve()
     var ev = Model.openWindowEvent(data)
@@ -808,27 +815,29 @@ Item {
       if (restoring) return null
       var size = Model.pseudoOpenSize(pseudoSizes, client, settings, listed)
       var addr = ev.address
-      // Its rule saw the workspace it opened from, not the one a workspace
-      // rule sent it to: beside another tiled window it tiles instead
-      if (!size && Model.pseudoRuleMatches(pseudoRuleSizes, client) && !Model.aloneOnWorkspace(client, listed)) {
+      var ctx = client ? Model.pseudoContext(client, listed) : ""
+      // No size for its context: it tiles, also when a rule pseudotiled it
+      // (its rule saw the workspace it opened from, not the one a workspace
+      // rule sent it to)
+      if (!size) {
+        if (!Model.pseudoRuleMatches(pseudoRuleSizes, client)) return null
         return dispatch("hl.dsp.window.pseudo({ action = \"disable\", window = \"address:" + addr + "\" })").then(function() {
-          log("pseudo: " + client.class + " " + addr + " shares its workspace, tiled")
+          log("pseudo: " + client.class + " " + addr + " has no " + ctx + " size, tiled")
         })
       }
-      if (!size) return null
-      var title = pseudoSizes[client.class][2] || client.initialTitle
+      var entry = pseudoSizes[client.class]
+      var title = entry[ctx][2] || (entry.alone || entry.shared)[2] || client.initialTitle
       // The app's main window mapped through its rule, at the size already
-      if (Model.pseudoRuleOpened(pseudoRuleSizes, client)) {
-        size = pseudoRuleSizes[client.class].slice(0, 2)
-        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, size, title)
-        log("pseudo: opened " + client.class + " " + addr + " at " + size[0] + "x" + size[1] + " by rule")
+      if (Model.pseudoRuleOpened(pseudoRuleSizes, client, ctx)) {
+        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, ctx, size, title)
+        log("pseudo: opened " + client.class + " " + addr + " " + ctx + " at " + size[0] + "x" + size[1] + " by rule")
         return null
       }
       return dispatch("hl.dsp.window.pseudo({ action = \"enable\", window = \"address:" + addr + "\" })").then(function() {
         return dispatch("hl.dsp.window.resize({ x = " + size[0] + ", y = " + size[1] + ", window = \"address:" + addr + "\" })")
       }).then(function() {
-        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, size, title)
-        log("pseudo: opened " + client.class + " " + addr + " at " + size[0] + "x" + size[1])
+        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, ctx, size, title)
+        log("pseudo: opened " + client.class + " " + addr + " " + ctx + " at " + size[0] + "x" + size[1])
       })
     })
   }

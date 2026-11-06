@@ -48,7 +48,11 @@ ShellRoot {
 
   readonly property string rulesOff: "for _, r in ipairs(_G.hypr_session_pseudo_rules or {}) do r:set_enabled(false) end; _G.hypr_session_pseudo_rules = {}"
   // The fake border is 1px: Hyprland's size counts it on both sides
-  readonly property string rulesOn: rulesOff + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-1", match = { class = [==[^(fakeapp)$]==], initial_title = [==[^(Main)$]==], workspace = "w[t0]" }, pseudo = true, size = "702 502" }))'
+  readonly property string rulesAlone: rulesOff + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-1", match = { class = [==[^(fakeapp)$]==], initial_title = [==[^(Main)$]==], workspace = "w[t0]" }, pseudo = true, size = "702 502" }))'
+  readonly property string rulesBoth: rulesAlone + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-2", match = { class = [==[^(fakeapp)$]==], initial_title = [==[^(Main)$]==], workspace = "w[t1-99]" }, pseudo = true, size = "602 402" }))'
+  readonly property string sizesAlone: '{\n  "fakeapp": {\n    "alone": [\n      700,\n      500,\n      "Main"\n    ]\n  }\n}\n'
+  readonly property string sizesBoth: '{\n  "fakeapp": {\n    "alone": [\n      700,\n      500,\n      "Main"\n    ],\n    "shared": [\n      600,\n      400,\n      "Main"\n    ]\n  }\n}\n'
+  function same(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
   property int evalsBefore: 0
 
   property var service: null
@@ -59,33 +63,42 @@ ShellRoot {
   readonly property var steps: [
     { name: "the service starts watching with the switch on by default",
       until: function() { return harness.service.watching && harness.service.settings.rememberPseudoSize === true } },
-    { name: "Super + P on a window makes the service follow its size",
+    { name: "Super + P on a window makes the service follow its size, alone on its workspace",
       run: function() { harness.service.pseudoToggled("0x1") },
       until: function() {
         var t = harness.service.pseudoTracked["0x1"]
-        return !!t && t.pseudo && t.class === "fakeapp" && t.size && t.size[0] === 800 && t.size[1] === 600
+        return !!t && t.pseudo && t.class === "fakeapp" && t.last === "alone" && harness.same(t.sizes, { alone: [800, 600] })
       } },
     { name: "resizing it is followed",
       run: function() { harness.setClients([["0x1", 700, 500]]) },
-      until: function() { var t = harness.service.pseudoTracked["0x1"]; return t.size[0] === 700 && t.size[1] === 500 } },
-    { name: "sharing its workspace with a tiled window, its shrunken size is not followed",
+      until: function() { return harness.same(harness.service.pseudoTracked["0x1"].sizes, { alone: [700, 500] }) } },
+    { name: "beside a tiled window its size is followed as its size there",
       run: function() { harness.setClients([["0x1", 600, 400], ["0x9", 600, 400, false, "Other", 2, "otherapp"]]) },
-      until: function() { var t = harness.service.pseudoTracked["0x1"]; return harness.waited > 2500 && t.size[0] === 700 && t.size[1] === 500 } },
-    { name: "closing it remembers the app's size in a private file",
+      until: function() {
+        var t = harness.service.pseudoTracked["0x1"]
+        return t.last === "shared" && harness.same(t.sizes, { alone: [700, 500], shared: [600, 400] })
+      } },
+    { name: "closing it remembers both sizes of the app in a private file",
       run: function() { harness.setClients([]); harness.service.onHyprEvent("closewindow", "1") },
       until: function() {
         readSizes.running = true
-        return harness.sizesText === '{\n  "fakeapp": [\n    700,\n    500,\n    "Main"\n  ]\n}\n' && harness.sizesMode === "600"
-          && !("0x1" in harness.service.pseudoTracked)
+        return harness.sizesText === harness.sizesBoth && harness.sizesMode === "600" && !("0x1" in harness.service.pseudoTracked)
       } },
-    { name: "the app gets a rule opening its main window pseudotiled at that size",
-      until: function() { return harness.lastEval() === harness.rulesOn } },
-    { name: "its main window opens through the rule, already at the size",
+    { name: "the app gets a rule per size opening its main window pseudotiled at it",
+      until: function() { return harness.lastEval() === harness.rulesBoth } },
+    { name: "its main window opens alone through the rule, already at its alone size",
       run: function() { harness.setClients([["0x2", 700, 500]]); harness.service.onHyprEvent("openwindow", "2,2,fakeapp,Main") },
       until: function() {
         var t = harness.service.pseudoTracked["0x2"]
-        return !!t && t.pseudo && t.size[0] === 700 && t.size[1] === 500 && t.title === "Main"
+        return !!t && t.pseudo && t.last === "alone" && harness.same(t.sizes, { alone: [700, 500] }) && t.title === "Main"
           && harness.waited > 1000 && !harness.called("address:0x2")
+      } },
+    { name: "its main window opens beside a tiled window through the rule, already at its size there",
+      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x9", 945, 1000, false, "Other", 2, "otherapp"], ["0xb", 600, 400]]); harness.service.onHyprEvent("openwindow", "b,2,fakeapp,Main") },
+      until: function() {
+        var t = harness.service.pseudoTracked["0xb"]
+        return !!t && t.pseudo && t.last === "shared" && harness.same(t.sizes, { shared: [600, 400] })
+          && harness.waited > 1000 && !harness.called("address:0xb")
       } },
     { name: "its main window shown again without the rule (from the tray) is pseudotiled right after",
       run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x7", 1900, 1000]]); harness.service.onHyprEvent("openwindow", "7,2,fakeapp,Main") },
@@ -94,59 +107,59 @@ ShellRoot {
           && harness.called('hl.dsp.window.resize({ x = 700, y = 500, window = "address:0x7" })')
           && harness.service.pseudoTracked["0x7"] && harness.service.pseudoTracked["0x7"].pseudo
       } },
-    { name: "it is followed at the size it was given",
-      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x7", 700, 500]]) },
-      until: function() { var t = harness.service.pseudoTracked["0x7"]; return t.size[0] === 700 && t.size[1] === 500 } },
-    { name: "closing it keeps the app's size",
-      run: function() { harness.setClients([["0x2", 700, 500]]); harness.service.onHyprEvent("closewindow", "7") },
+    { name: "closing it keeps the app's sizes",
+      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3]]); harness.service.onHyprEvent("closewindow", "7") },
       until: function() {
         readSizes.running = true
-        return !("0x7" in harness.service.pseudoTracked) && harness.sizesText.indexOf("700,\n    500,\n    \"Main\"") !== -1
+        return !("0x7" in harness.service.pseudoTracked) && harness.sizesText === harness.sizesBoth
       } },
-    { name: "another tiled window of the app is pseudotiled at that size right after it opens",
-      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x6", 1900, 1000, false, "Other"]]); harness.service.onHyprEvent("openwindow", "6,2,fakeapp,Other") },
+    { name: "another tiled window of the app beside a tiled window is pseudotiled at its size there right after it opens",
+      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x9", 945, 1000, false, "Other", 2, "otherapp"], ["0x6", 945, 1000, false, "Other"]]); harness.service.onHyprEvent("openwindow", "6,2,fakeapp,Other") },
       until: function() {
         return harness.called('hl.dsp.window.pseudo({ action = "enable", window = "address:0x6" })')
-          && harness.called('hl.dsp.window.resize({ x = 700, y = 500, window = "address:0x6" })')
+          && harness.called('hl.dsp.window.resize({ x = 600, y = 400, window = "address:0x6" })')
           && harness.service.pseudoTracked["0x6"] && harness.service.pseudoTracked["0x6"].pseudo
       } },
-    { name: "its main window sent by the rule beside another tiled window (another workspace's rule) turns pseudotile off",
-      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x9", 945, 1000, false, "Other", 5, "otherapp"], ["0xa", 700, 500, false, "Main", 5]]); harness.service.onHyprEvent("openwindow", "a,5,fakeapp,Main") },
+    { name: "Super + P off on it, then closing it, forgets only the app's size beside a tiled window",
+      run: function() {
+        harness.service.pseudoToggled("0x6")
+        harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x9", 945, 1000, false, "Other", 2, "otherapp"]])
+        harness.service.onHyprEvent("closewindow", "6")
+      },
+      until: function() {
+        readSizes.running = true
+        return !("0x6" in harness.service.pseudoTracked) && harness.sizesText === harness.sizesAlone && harness.lastEval() === harness.rulesAlone
+      } },
+    { name: "its main window opening beside a tiled window with no size there tiles, even pseudotiled by a rule",
+      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x9", 945, 1000, false, "Other", 2, "otherapp"], ["0xa", 700, 500]]); harness.service.onHyprEvent("openwindow", "a,2,fakeapp,Main") },
       until: function() {
         return harness.called('hl.dsp.window.pseudo({ action = "disable", window = "address:0xa" })') && !("0xa" in harness.service.pseudoTracked)
       } },
-    { name: "a tiled window of the app opening beside another tiled window tiles beside it",
-      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x6", 700, 500, false, "Other", 4], ["0x9", 945, 1000, false, "Other", 2, "otherapp"], ["0x8", 945, 1000, false, "Other"]]); harness.service.onHyprEvent("openwindow", "8,2,fakeapp,Other") },
+    { name: "another tiled window of the app beside a tiled window with no size there tiles",
+      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x9", 945, 1000, false, "Other", 2, "otherapp"], ["0x8", 945, 1000, false, "Other"]]); harness.service.onHyprEvent("openwindow", "8,2,fakeapp,Other") },
       until: function() { return harness.waited > 2500 && !harness.called("address:0x8") && !("0x8" in harness.service.pseudoTracked) } },
-    { name: "closing that one keeps the main window's title in the rule",
-      run: function() { harness.setClients([["0x2", 700, 500]]); harness.service.onHyprEvent("closewindow", "6") },
-      until: function() {
-        readSizes.running = true
-        return !("0x6" in harness.service.pseudoTracked) && harness.sizesText.indexOf('"Main"') !== -1
-          && harness.lastEval() === harness.rulesOn
-      } },
     { name: "a config reload drops the rules, so they are made again",
       run: function() { harness.evalsBefore = harness.evals().length; harness.service.onHyprEvent("configreloaded", "") },
-      until: function() { return harness.evals().length > harness.evalsBefore && harness.lastEval() === harness.rulesOn } },
+      until: function() { return harness.evals().length > harness.evalsBefore && harness.lastEval() === harness.rulesAlone } },
     { name: "a floating window of the app is left alone",
       run: function() { harness.setClients([["0x2", 700, 500], ["0x3", 400, 300, true]]); harness.service.onHyprEvent("openwindow", "3,2,fakeapp,title") },
       until: function() { return harness.waited > 2500 && !harness.called("address:0x3") } },
     { name: "during a restore a new window is left alone",
-      run: function() { harness.service.restoring = true; harness.setClients([["0x2", 700, 500], ["0x4", 1900, 1000]]); harness.service.onHyprEvent("openwindow", "4,2,fakeapp,title") },
+      run: function() { harness.service.restoring = true; harness.setClients([["0x2", 700, 500], ["0x4", 1900, 1000, false, "title", 4]]); harness.service.onHyprEvent("openwindow", "4,4,fakeapp,title") },
       until: function() { return harness.waited > 2500 && !harness.called("address:0x4") && harness.lastEval() === harness.rulesOff } },
     { name: "switched off, Super + P is not followed and new windows are left alone",
       run: function() {
         harness.service.restoring = false
         harness.service.setSetting("rememberPseudoSize", false)
         harness.service.pseudoToggled("0x2")
-        harness.setClients([["0x2", 700, 500], ["0x5", 1900, 1000]])
-        harness.service.onHyprEvent("openwindow", "5,2,fakeapp,title")
+        harness.setClients([["0x2", 700, 500], ["0x5", 1900, 1000, false, "title", 4]])
+        harness.service.onHyprEvent("openwindow", "5,4,fakeapp,title")
       },
       until: function() {
         return harness.waited > 2500 && !harness.called("address:0x5") && harness.service.pseudoTracked["0x2"].pseudo === true
           && harness.lastEval() === harness.rulesOff
       } },
-    { name: "Super + P on the plugin's own window then closing it forgets the app's size",
+    { name: "Super + P on the plugin's own window alone, then closing it, forgets the app's last size",
       run: function() {
         harness.service.setSetting("rememberPseudoSize", true)
         harness.service.pseudoToggled("0x2")

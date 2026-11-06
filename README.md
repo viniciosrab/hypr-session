@@ -37,9 +37,9 @@ Open **Saved apps** and switch off the apps that should not be saved or reopened
 
 ## Remember the Super + P size
 
-Pseudotile a window with Super + P and resize it: when it closes, its app remembers that size, and the app's next tiled window opens pseudotiled at it. One size per app, kept across restarts. Closing the app's window after turning pseudotile off forgets the size. Floating windows and windows reopened by a restore are left alone.
+Pseudotile a window with Super + P and resize it: when it closes, its app remembers that size, and the app's next tiled window opens pseudotiled at it. Floating windows and windows reopened by a restore are left alone.
 
-The size only counts while the window is the only tiled one on its workspace. Beside another tiled window Hyprland shrinks it to its half, so that is never taken as its size, and a window of the app opening on a workspace that already has a tiled window tiles beside it, filling its half, instead of opening at the size.
+Each app keeps two sizes, kept across restarts: one for when it is alone on its workspace and one for when it sits beside another tiled window. Sized alone, it comes back at that size when it opens alone; sized beside another window, it comes back at that size when it opens beside one. With no size for where it opens, it tiles as usual. Closing the app's window after turning pseudotile off forgets the size for where it was.
 
 The app's main window (one with the same initial title as the window the size came from) opens at that size straight away, through a window rule the plugin keeps in Hyprland. Its other tiled windows open full size and shrink to it right after, and so does a window an app shows again from its tray icon (Hyprland does not apply window rules to a window shown again).
 
@@ -75,7 +75,7 @@ omarchy-shell hypr-session pseudo <address>    # Super + P flipped this window (
 ## Files
 
 - `~/.local/state/hypr-session.json`: the saved session
-- `~/.local/state/hypr-session.sizes.json`: the Super + P size of each app
+- `~/.local/state/hypr-session.sizes.json`: the Super + P sizes of each app, alone and beside another window
 - `~/.local/state/hypr-session.log`: what was saved and restored, useful when something doesn't come back right
 
 ## Coming from the script version
