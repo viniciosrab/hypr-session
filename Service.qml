@@ -785,12 +785,14 @@ Item {
     })
   }
 
-  // A new tiled window of an app with a remembered size opens pseudotiled at it
+  // A new tiled window of an app with a remembered size opens pseudotiled at
+  // it, unless another tiled window shares its workspace
   function pseudoOpen(data) {
     if (!settings.rememberPseudoSize || restoring) return Promise.resolve()
     var ev = Model.openWindowEvent(data)
     if (!ev || !(ev.class in pseudoSizes) || ev.address in pseudoTracked) return Promise.resolve()
     var client = null
+    var listed = []
     var tries = 0
     // The window may not be listed yet when the event arrives
     return loop(function() {
@@ -798,14 +800,22 @@ Item {
       return (tries++ ? sleep(200) : Promise.resolve()).then(function() {
         return hyprJson(["clients", "-j"])
       }).then(function(clients) {
-        client = (clients || []).filter(function(c) { return Model.windowAddress(c.address) === ev.address })[0] || null
+        listed = clients || []
+        client = listed.filter(function(c) { return Model.windowAddress(c.address) === ev.address })[0] || null
         return true
       })
     }).then(function() {
       if (restoring) return null
-      var size = Model.pseudoOpenSize(pseudoSizes, client, settings)
-      if (!size) return null
+      var size = Model.pseudoOpenSize(pseudoSizes, client, settings, listed)
       var addr = ev.address
+      // Its rule saw the workspace it opened from, not the one a workspace
+      // rule sent it to: beside another tiled window it tiles instead
+      if (!size && Model.pseudoRuleMatches(pseudoRuleSizes, client) && !Model.aloneOnWorkspace(client, listed)) {
+        return dispatch("hl.dsp.window.pseudo({ action = \"disable\", window = \"address:" + addr + "\" })").then(function() {
+          log("pseudo: " + client.class + " " + addr + " shares its workspace, tiled")
+        })
+      }
+      if (!size) return null
       var title = pseudoSizes[client.class][2] || client.initialTitle
       // The app's main window mapped through its rule, at the size already
       if (Model.pseudoRuleOpened(pseudoRuleSizes, client)) {
