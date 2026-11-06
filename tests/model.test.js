@@ -397,7 +397,7 @@ test("calm needs cpu < 0.30, io < 0.20 and memory < 0.10; a missing file is calm
 })
 
 function client(address, cls, w, h, extra) {
-  return Object.assign({ address, class: cls, size: [w, h], floating: false, fullscreen: 0 }, extra || {})
+  return Object.assign({ address, class: cls, size: [w, h], floating: false, fullscreen: 0, workspace: { id: 1, name: "1" } }, extra || {})
 }
 
 test("window addresses normalize to lowercase 0x hex, junk to empty", () => {
@@ -428,7 +428,7 @@ test("Super + P flips a window, the plugin's own opens start pseudotiled", () =>
 
 test("a pseudotiled window follows its tiled size and leaves it to its app when it closes", () => {
   let t = M.pseudoFlipped({}, "0x1")
-  let r = M.pseudoTrack(t, {}, [client("0x1", "foot", 900, 700), client("0x9", "other", 10, 10)])
+  let r = M.pseudoTrack(t, {}, [client("0x1", "foot", 900, 700), client("0x9", "other", 10, 10, { workspace: { id: 2, name: "2" } })])
   assert.deepEqual(r.tracked, { "0x1": { pseudo: true, class: "foot", size: [900, 700] } })
   assert.equal(r.changed, false)
   // Floating or fullscreen, the size on screen is not its pseudo size
@@ -438,6 +438,37 @@ test("a pseudotiled window follows its tiled size and leaves it to its app when 
   assert.deepEqual(r.tracked["0x1"].size, [900, 700])
   r = M.pseudoTrack(r.tracked, { kitty: [1, 1] }, [])
   assert.deepEqual(r, { tracked: {}, sizes: { kitty: [1, 1], foot: [900, 700] }, changed: true })
+})
+
+test("a pseudotiled window only follows its size while no tiled window shares its workspace", () => {
+  const ws2 = { workspace: { id: 2, name: "2" } }
+  let r = M.pseudoTrack(M.pseudoFlipped({}, "0x1"), {}, [client("0x1", "foot", 900, 700)])
+  assert.deepEqual(r.tracked["0x1"].size, [900, 700])
+  // Another tiled window joins: Hyprland shrinks it to its tile, not its pseudo size
+  r = M.pseudoTrack(r.tracked, {}, [client("0x1", "foot", 945, 1028), client("0x2", "chrome", 945, 1028)])
+  assert.deepEqual(r.tracked["0x1"].size, [900, 700])
+  // Floating, hidden or elsewhere, the others leave it the whole workspace
+  r = M.pseudoTrack(r.tracked, {}, [client("0x1", "foot", 800, 600), client("0x3", "pip", 300, 200, { floating: true }),
+    client("0x4", "tray", 945, 1028, { hidden: true }), client("0x5", "chrome", 945, 1028, ws2)])
+  assert.deepEqual(r.tracked["0x1"].size, [800, 600])
+  r = M.pseudoTrack(r.tracked, {}, [])
+  assert.deepEqual(r.sizes, { foot: [800, 600] })
+})
+
+test("Super + P on a window that was never alone on its workspace keeps its app's size", () => {
+  let r = M.pseudoTrack(M.pseudoFlipped({}, "0x1"), { foot: [800, 600] }, [client("0x1", "foot", 945, 1028), client("0x2", "chrome", 945, 1028)])
+  assert.deepEqual(r.tracked["0x1"], { pseudo: true, class: "foot", size: null })
+  r = M.pseudoTrack(r.tracked, r.sizes, [])
+  assert.deepEqual(r, { tracked: {}, sizes: { foot: [800, 600] }, changed: false })
+})
+
+test("a new window takes its app's size only when no tiled window shares its workspace", () => {
+  const sizes = { foot: [800, 600] }
+  const on = M.defaultSettings()
+  const own = client("0x1", "foot", 945, 1028)
+  assert.equal(M.pseudoOpenSize(sizes, own, on, [own, client("0x2", "chrome", 945, 1028)]), null)
+  assert.deepEqual(M.pseudoOpenSize(sizes, own, on, [own, client("0x3", "pip", 300, 200, { floating: true }),
+    client("0x4", "tray", 945, 1028, { hidden: true }), client("0x5", "chrome", 945, 1028, { workspace: { id: 2, name: "2" } })]), [800, 600])
 })
 
 test("a window closed no longer pseudotiled makes its app forget the size", () => {
@@ -494,8 +525,8 @@ test("each app with a titled size gets a rule opening its main window pseudotile
   // The rule's size counts the border on both sides: the window itself ends at [w, h]
   const lua = M.pseudoRulesLua({ foot: [800, 600, "foot"], kitty: [700, 500], "a.b": [300, 200, "Tab (1) ]==] x"] }, 2)
   assert.equal(lua, M.PSEUDO_RULES_OFF_LUA
-    + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-1", match = { class = [==[^(a\\.b)$]==], initial_title = [==[^(Tab \\(1\\) \\]==\\] x)$]==] }, pseudo = true, size = "304 204" }))'
-    + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-2", match = { class = [==[^(foot)$]==], initial_title = [==[^(foot)$]==] }, pseudo = true, size = "804 604" }))')
+    + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-1", match = { class = [==[^(a\\.b)$]==], initial_title = [==[^(Tab \\(1\\) \\]==\\] x)$]==], workspace = "w[t0]" }, pseudo = true, size = "304 204" }))'
+    + '; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = "hypr-session-pseudo-2", match = { class = [==[^(foot)$]==], initial_title = [==[^(foot)$]==], workspace = "w[t0]" }, pseudo = true, size = "804 604" }))')
   assert.equal(M.pseudoRulesLua({ kitty: [700, 500] }, 1), M.PSEUDO_RULES_OFF_LUA)
 })
 
@@ -509,6 +540,15 @@ test("a tiled window matching its app's rule opened pseudotiled already", () => 
   // A hidden window shown again (an app reopened from the tray) maps without
   // its rules: full tile size, so it still needs pseudotiling
   assert.equal(M.pseudoRuleOpened(rules, client("0x1", "foot", 945, 558, { initialTitle: "foot" })), false)
+})
+
+test("a window matches its app's rule by class and initial title, whatever its size", () => {
+  const rules = { foot: [800, 600, "foot"], kitty: [700, 500] }
+  assert.equal(M.pseudoRuleMatches(rules, client("0x1", "foot", 945, 1028, { initialTitle: "foot" })), true)
+  assert.equal(M.pseudoRuleMatches(rules, client("0x1", "foot", 800, 600, { initialTitle: "other" })), false)
+  assert.equal(M.pseudoRuleMatches(rules, client("0x1", "kitty", 700, 500, { initialTitle: "kitty" })), false)
+  assert.equal(M.pseudoRuleMatches(rules, client("0x1", "foot", 800, 600, { initialTitle: "foot", floating: true })), false)
+  assert.equal(M.pseudoRuleMatches(rules, null), false)
 })
 
 test("openwindow event data gives the address and class", () => {

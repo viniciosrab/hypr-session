@@ -483,10 +483,12 @@ function logLine(now, message) {
 // hyprctl field, no event. The Super + P bind tells the plugin which window
 // it flipped, the plugin follows that window's size while it is open, and
 // when it closes the app's size is remembered (or forgotten, when the window
-// was no longer pseudotiled). A new window of that app opens pseudotiled at
-// that size: the app's main window (the initial title the size came from)
-// through a window rule, so it maps at that size, any other tiled one
-// resized right after it opens.
+// was no longer pseudotiled). Only a window alone tiled on its workspace
+// shows its size: beside another one Hyprland shrinks it to its tile. A new
+// window of that app opening on a workspace with no tiled window opens
+// pseudotiled at that size: the app's main window (the initial title the
+// size came from) through a window rule, so it maps at that size, any other
+// tiled one resized right after it opens.
 
 // "55d0c", "0x55d0c" or "0X55D0C" -> "0x55d0c"; "" for anything else.
 function windowAddress(text) {
@@ -534,10 +536,25 @@ function anyPseudo(tracked) {
   return Object.keys(tracked).some(function(a) { return tracked[a].pseudo })
 }
 
+// Whether no other tiled window shares `client`'s workspace, so its tile is
+// the whole workspace: only then does a pseudotiled window show its pseudo
+// size (Hyprland shrinks it to a smaller tile, and hyprctl only tells the
+// shrunken size).
+function aloneOnWorkspace(client, clients) {
+  var ws = client.workspace ? client.workspace.id : null
+  var addr = windowAddress(client.address)
+  return !(clients || []).some(function(c) {
+    return windowAddress(c.address) !== addr && !c.floating && !c.hidden && c.mapped !== false
+      && (c.workspace ? c.workspace.id : null) === ws
+  })
+}
+
 // Follows the tracked windows in `clients`. A pseudotiled one keeps its
-// size while tiled (floating or fullscreen it is not its pseudo size). One
-// gone from `clients` closed: its app keeps that size, or loses it when the
-// window was no longer pseudotiled. Returns { tracked, sizes, changed }.
+// size while tiled alone on its workspace (floating, fullscreen or sharing
+// it, the size on screen is not its pseudo size). One gone from `clients`
+// closed: its app keeps that size, or loses it when the window was no longer
+// pseudotiled; one never seen alone leaves the app's size as it was.
+// Returns { tracked, sizes, changed }.
 function pseudoTrack(tracked, sizes, clients) {
   var nextTracked = {}
   var nextSizes = JSON.parse(JSON.stringify(sizes))
@@ -550,23 +567,24 @@ function pseudoTrack(tracked, sizes, clients) {
     if (c) {
       t.class = c.class || t.class
       if (c.initialTitle && !t.title) t.title = c.initialTitle
-      if (t.pseudo && !c.floating && !c.fullscreen && c.size && c.size[0] > 0 && c.size[1] > 0) t.size = [c.size[0], c.size[1]]
+      if (t.pseudo && !c.floating && !c.fullscreen && c.size && c.size[0] > 0 && c.size[1] > 0 && aloneOnWorkspace(c, clients)) t.size = [c.size[0], c.size[1]]
       nextTracked[addr] = t
       return
     }
     if (!t.class) return
     var before = JSON.stringify(nextSizes[t.class] || null)
     if (t.pseudo && t.size) nextSizes[t.class] = [Math.round(t.size[0]), Math.round(t.size[1])].concat(t.title ? [t.title] : [])
-    else delete nextSizes[t.class]
+    else if (!t.pseudo) delete nextSizes[t.class]
     if (JSON.stringify(nextSizes[t.class] || null) !== before) changed = true
   })
   return { tracked: nextTracked, sizes: nextSizes, changed: changed }
 }
 
 // The size a new window should open at, pseudotiled: [w, h], or null when
-// the feature is off, its app has no size, or it opened floating.
-function pseudoOpenSize(sizes, client, settings) {
-  if (!settings.rememberPseudoSize || !client || client.floating) return null
+// the feature is off, its app has no size, it opened floating, or a tiled
+// window in `clients` shares its workspace (it tiles beside it instead).
+function pseudoOpenSize(sizes, client, settings, clients) {
+  if (!settings.rememberPseudoSize || !client || client.floating || !aloneOnWorkspace(client, clients)) return null
   var s = sizes[client.class]
   return s ? s.slice(0, 2) : null
 }
@@ -576,7 +594,9 @@ var PSEUDO_RULES_OFF_LUA = "for _, r in ipairs(_G.hypr_session_pseudo_rules or {
 // One rule per app whose size knows its main window's initial title: that
 // window maps pseudotiled at the size. The title keeps the app's other
 // windows out (a picture-in-picture, a dialog): the rule is read before
-// Hyprland decides a window floats, so a float match cannot. Hyprland's size
+// Hyprland decides a window floats, so a float match cannot. `w[t0]` keeps
+// it to a workspace with no tiled window yet (the new one is not counted
+// when the rule is read), so beside another window it tiles. Hyprland's size
 // counts the border, the remembered one does not. Rules live in Hyprland and
 // a config reload drops them; a new set starts by switching the old off.
 function pseudoRulesLua(sizes, border) {
@@ -585,10 +605,18 @@ function pseudoRulesLua(sizes, border) {
   Object.keys(sizes).sort().filter(function(cls) { return sizes[cls].length === 3 }).forEach(function(cls, i) {
     var s = sizes[cls]
     lua += "; table.insert(_G.hypr_session_pseudo_rules, hl.window_rule({ name = \"hypr-session-pseudo-" + (i + 1)
-      + "\", match = { class = [==[^(" + regexEscape(cls) + ")$]==], initial_title = [==[^(" + regexEscape(s[2]) + ")$]==] }"
+      + "\", match = { class = [==[^(" + regexEscape(cls) + ")$]==], initial_title = [==[^(" + regexEscape(s[2]) + ")$]==], workspace = \"w[t0]\" }"
       + ", pseudo = true, size = \"" + (s[0] + b) + " " + (s[1] + b) + "\" }))"
   })
   return lua
+}
+
+// Whether `client` is a tiled window its app's rule (`rules`) is made for:
+// the app's main window, whatever size it has.
+function pseudoRuleMatches(rules, client) {
+  if (!client || client.floating) return false
+  var s = rules[client.class]
+  return !!s && s.length === 3 && client.initialTitle === s[2]
 }
 
 // Whether `client` opened through its app's rule (`rules`, the sizes the
@@ -596,9 +624,9 @@ function pseudoRulesLua(sizes, border) {
 // It must be at that size too: a hidden window shown again (an app reopened
 // from the tray) keeps its address and maps without its rules.
 function pseudoRuleOpened(rules, client) {
-  if (!client || client.floating || !client.size) return false
+  if (!pseudoRuleMatches(rules, client) || !client.size) return false
   var s = rules[client.class]
-  return !!s && s.length === 3 && client.initialTitle === s[2] && client.size[0] === s[0] && client.size[1] === s[1]
+  return client.size[0] === s[0] && client.size[1] === s[1]
 }
 
 // An openwindow event's data, "ADDR,WORKSPACE,CLASS,TITLE": { address, class }.
@@ -731,8 +759,8 @@ if (typeof module !== "undefined" && module.exports) {
     shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay,
     windowAddress: windowAddress, parsePseudoSizes: parsePseudoSizes, serializePseudoSizes: serializePseudoSizes,
     pseudoFlipped: pseudoFlipped, pseudoOpened: pseudoOpened, anyPseudo: anyPseudo, pseudoTrack: pseudoTrack,
-    pseudoOpenSize: pseudoOpenSize, openWindowEvent: openWindowEvent,
-    PSEUDO_RULES_OFF_LUA: PSEUDO_RULES_OFF_LUA, pseudoRulesLua: pseudoRulesLua, pseudoRuleOpened: pseudoRuleOpened,
+    pseudoOpenSize: pseudoOpenSize, aloneOnWorkspace: aloneOnWorkspace, openWindowEvent: openWindowEvent,
+    PSEUDO_RULES_OFF_LUA: PSEUDO_RULES_OFF_LUA, pseudoRulesLua: pseudoRulesLua, pseudoRuleMatches: pseudoRuleMatches, pseudoRuleOpened: pseudoRuleOpened,
     pressureTotals: pressureTotals, pressureLoad: pressureLoad, calm: calm
   }
 }
