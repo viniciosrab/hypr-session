@@ -20,6 +20,7 @@ import "Model.js" as Model
 //   ~/.local/state/hypr-session.log            what happened
 // and, for the Super + P sizes (see Model.pseudoTrack):
 //   ~/.local/state/hypr-session.sizes.json     { class: { alone: [w, h], shared: [w, h] } }
+//   ~/.local/state/hypr-session.pseudo.json    { instance, windows: { addr: tracked } }
 Item {
   id: root
 
@@ -32,6 +33,8 @@ Item {
   readonly property string restoredPath: statePath.replace(/\.json$/, "") + ".restored.json"
   readonly property string logPath: statePath.replace(/\.json$/, "") + ".log"
   readonly property string pseudoSizesPath: statePath.replace(/\.json$/, "") + ".sizes.json"
+  readonly property string pseudoTrackedPath: statePath.replace(/\.json$/, "") + ".pseudo.json"
+  readonly property string hyprInstance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
   readonly property string settingsDir: home + "/.local/state/omarchy/settings"
   readonly property string settingsPath: settingsDir + "/hypr-session.json"
   readonly property string markerPath: Quickshell.env("HYPR_SESSION_MARKER") || ((Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/hypr-session.restored."
@@ -74,6 +77,8 @@ Item {
   property bool pseudoLoaded: false
   property bool pseudoBusy: false
   property bool pseudoAgain: false
+  // What the tracked windows file holds now
+  property string pseudoTrackedText: ""
   // The sizes the Super + P rules in Hyprland were made from, the Lua that
   // made them ("" until sent, or after a config reload dropped them) and the
   // queue that keeps one rule update at a time
@@ -187,6 +192,7 @@ Item {
   FileView { id: stateWriter; path: root.statePath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
   FileView { id: restoredWriter; path: root.restoredPath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
   FileView { id: pseudoSizesWriter; path: root.pseudoSizesPath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
+  FileView { id: pseudoTrackedWriter; path: root.pseudoTrackedPath; atomicWrites: true; printErrors: false; onSaved: root.protect([path]) }
   FileView { id: settingsWriter; path: root.settingsPath; atomicWrites: true; printErrors: false }
 
   // ---- Settings -----------------------------------------------------------------
@@ -780,7 +786,25 @@ Item {
     })
   }
 
-  // Follows the tracked windows, and remembers or forgets the app of one gone
+  // Keeps the windows followed across a shell restart (see Model.parsePseudoTracked)
+  function savePseudoTracked() {
+    if (!pseudoLoaded) return Promise.resolve()
+    var text = Model.serializePseudoTracked(pseudoTracked, hyprInstance)
+    if (text === pseudoTrackedText) return Promise.resolve()
+    pseudoTrackedText = text
+    return run(["mkdir", "-p", stateDir]).then(function() { pseudoTrackedWriter.setText(text) })
+  }
+
+  Timer {
+    id: pseudoTrackedDebounce
+    interval: 300
+    repeat: false
+    onTriggered: root.savePseudoTracked()
+  }
+
+  onPseudoTrackedChanged: pseudoTrackedDebounce.restart()
+
+  // Follows the tracked windows, and remembers or forgets the size of their app
   function trackPseudo() {
     if (!pseudoLoaded) return Promise.resolve()
     if (pseudoBusy) { pseudoAgain = true; return Promise.resolve() }
@@ -948,12 +972,25 @@ Item {
     loadAppNames()
     // A restore cut short by a shell restart left its window rules on
     return rulesOff().then(function() {
-      return protect([statePath, restoredPath, pseudoSizesPath])
+      return protect([statePath, restoredPath, pseudoSizesPath, pseudoTrackedPath])
     }).then(function() {
       return run(["cat", pseudoSizesPath])
     }).then(function(sizes) {
       if (sizes.code === 0) pseudoSizes = Model.parsePseudoSizes(sizes.out)
+      return run(["cat", pseudoTrackedPath])
+    }).then(function(saved) {
+      if (saved.code !== 0) return null
+      pseudoTrackedText = saved.out
+      // Windows a shell restart left still open, never taken for closed
+      return hyprJson(["clients", "-j"]).then(function(clients) {
+        var kept = Model.parsePseudoTracked(saved.out, hyprInstance, clients || [])
+        Object.keys(kept).forEach(function(a) { log("pseudo: following " + kept[a].class + " " + a + " again") })
+        Object.keys(pseudoTracked).forEach(function(a) { kept[a] = pseudoTracked[a] })
+        pseudoTracked = kept
+      })
+    }).then(function() {
       pseudoLoaded = true
+      savePseudoTracked()
       if (Object.keys(pseudoTracked).length > 0) trackPseudo()
     }).then(function() {
       return run(["cat", statePath])

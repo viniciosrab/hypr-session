@@ -5,10 +5,10 @@ import "plugin" as Plugin
 
 // Drives the real Service.qml against the fake hyprctl (tests/bin): Super + P
 // tells the service which window it flipped, the service follows its size,
-// remembers it for the app when the window closes, and opens the app's next
+// remembers it for the app as soon as it changes, and opens the app's next
 // window pseudotiled at that size: its main window through a window rule in
 // Hyprland, any other tiled one right after it opens. Off, or during a
-// restore, it does nothing.
+// restore, it does nothing. The windows it follows survive a shell restart.
 ShellRoot {
   id: harness
 
@@ -16,6 +16,8 @@ ShellRoot {
   readonly property string pid: Quickshell.env("FAKE_PID")
   readonly property string home: Quickshell.env("HOME")
   readonly property string sizesPath: home + "/.local/state/hypr-session.sizes.json"
+  readonly property string trackedPath: home + "/.local/state/hypr-session.pseudo.json"
+  readonly property string instance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
 
   property string callsText: ""
   property string sizesText: ""
@@ -32,6 +34,20 @@ ShellRoot {
       }
     }
   }
+  property string trackedText: ""
+  property string trackedMode: ""
+  Process {
+    id: readTracked
+    command: ["sh", "-c", 'cat "$1" && printf "\\nmode=%s" "$(stat -c %a "$1")"', "_", harness.trackedPath]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var at = text.lastIndexOf("\nmode=")
+        harness.trackedText = at === -1 ? "" : text.slice(0, at)
+        harness.trackedMode = at === -1 ? "" : text.slice(at + 6).trim()
+      }
+    }
+  }
+  function parsed(text) { try { return JSON.parse(text) } catch (e) { return null } }
   Process { id: writeClients; property string json: "[]"; command: ["sh", "-c", 'printf "%s" "$1" >"$2/clients.json"', "_", json, harness.fake] }
 
   function setClients(list) {
@@ -54,6 +70,7 @@ ShellRoot {
   readonly property string sizesBoth: '{\n  "fakeapp": {\n    "alone": [\n      700,\n      500,\n      "Main"\n    ],\n    "shared": [\n      600,\n      400,\n      "Main"\n    ]\n  }\n}\n'
   function same(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
   property int evalsBefore: 0
+  property int resizedAt: -1
 
   property var service: null
   property int stepIndex: -1
@@ -69,14 +86,19 @@ ShellRoot {
         var t = harness.service.pseudoTracked["0x1"]
         return !!t && t.pseudo && t.class === "fakeapp" && t.last === "alone" && harness.same(t.sizes, { alone: [800, 600] })
       } },
-    { name: "resizing it is followed",
+    { name: "resizing it keeps the app's size in a private file before it closes",
       run: function() { harness.setClients([["0x1", 700, 500]]) },
-      until: function() { return harness.same(harness.service.pseudoTracked["0x1"].sizes, { alone: [700, 500] }) } },
-    { name: "beside a tiled window its size is followed as its size there",
+      until: function() {
+        readSizes.running = true
+        return harness.same(harness.service.pseudoTracked["0x1"].sizes, { alone: [700, 500] })
+          && harness.sizesText === harness.sizesAlone && harness.sizesMode === "600"
+      } },
+    { name: "beside a tiled window its size is kept as its size there",
       run: function() { harness.setClients([["0x1", 600, 400], ["0x9", 600, 400, false, "Other", 2, "otherapp"]]) },
       until: function() {
+        readSizes.running = true
         var t = harness.service.pseudoTracked["0x1"]
-        return t.last === "shared" && harness.same(t.sizes, { alone: [700, 500], shared: [600, 400] })
+        return t.last === "shared" && harness.same(t.sizes, { alone: [700, 500], shared: [600, 400] }) && harness.sizesText === harness.sizesBoth
       } },
     { name: "closing it remembers both sizes of the app in a private file",
       run: function() { harness.setClients([]); harness.service.onHyprEvent("closewindow", "1") },
@@ -101,11 +123,16 @@ ShellRoot {
           && harness.waited > 1000 && !harness.called("address:0xb")
       } },
     { name: "its main window shown again without the rule (from the tray) is pseudotiled right after",
-      run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x7", 1900, 1000]]); harness.service.onHyprEvent("openwindow", "7,2,fakeapp,Main") },
+      run: function() { harness.resizedAt = -1; harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x7", 1900, 1000]]); harness.service.onHyprEvent("openwindow", "7,2,fakeapp,Main") },
       until: function() {
-        return harness.called('hl.dsp.window.pseudo({ action = "enable", window = "address:0x7" })')
-          && harness.called('hl.dsp.window.resize({ x = 700, y = 500, window = "address:0x7" })')
-          && harness.service.pseudoTracked["0x7"] && harness.service.pseudoTracked["0x7"].pseudo
+        var t = harness.service.pseudoTracked["0x7"]
+        if (harness.resizedAt === -1 && harness.called('hl.dsp.window.pseudo({ action = "enable", window = "address:0x7" })')
+            && harness.called('hl.dsp.window.resize({ x = 700, y = 500, window = "address:0x7" })') && t && t.pseudo) {
+          // The fake hyprctl doesn't resize: show the window at its new size
+          harness.resizedAt = harness.waited
+          harness.setClients([["0x2", 700, 500, false, "Main", 3], ["0x7", 700, 500]])
+        }
+        return harness.resizedAt !== -1 && harness.waited - harness.resizedAt > 2500 && harness.same(t.sizes, { alone: [700, 500] })
       } },
     { name: "closing it keeps the app's sizes",
       run: function() { harness.setClients([["0x2", 700, 500, false, "Main", 3]]); harness.service.onHyprEvent("closewindow", "7") },
@@ -170,6 +197,30 @@ ShellRoot {
         readSizes.running = true
         return harness.sizesText === "{}\n" && Object.keys(harness.service.pseudoSizes).length === 0
           && harness.lastEval() === harness.rulesOff
+      } },
+    { name: "the windows followed are kept, with the Hyprland instance, in a private file",
+      run: function() { harness.setClients([["0xc", 800, 600]]); harness.service.pseudoToggled("0xc") },
+      until: function() {
+        readTracked.running = true
+        var f = harness.parsed(harness.trackedText)
+        return !!f && f.instance === harness.instance && !!f.windows["0xc"] && f.windows["0xc"].pseudo === true
+          && f.windows["0xc"].class === "fakeapp" && harness.trackedMode === "600"
+      } },
+    { name: "after a shell restart the window is still followed, and its new size kept",
+      run: function() {
+        harness.service.destroy()
+        harness.service = null
+        harness.setClients([["0xc", 650, 450]])
+      },
+      until: function() {
+        if (!harness.service) {
+          if (harness.waited >= 600) harness.service = serviceComponent.createObject(harness)
+          return false
+        }
+        readSizes.running = true
+        var t = harness.service.pseudoTracked["0xc"]
+        var sizes = harness.parsed(harness.sizesText)
+        return !!t && t.pseudo && !!sizes && harness.same(sizes, { fakeapp: { alone: [650, 450, "Main"] } })
       } }
   ]
 
