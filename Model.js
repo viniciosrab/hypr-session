@@ -481,9 +481,9 @@ function logLine(now, message) {
 //
 // Hyprland tells nobody whether a window is pseudotiled (Super + P): no
 // hyprctl field, no event. The Super + P bind tells the plugin which window
-// it flipped, the plugin follows that window's size while it is open, and
-// when it closes the app's size is remembered (or forgotten, when the window
-// was no longer pseudotiled). Each app has a size per context: `alone` on a
+// it flipped, the plugin follows that window's size while it is open and
+// remembers it for the app as soon as it changes; when it closes no longer
+// pseudotiled, the app's size is forgotten. Each app has a size per context: `alone` on a
 // workspace with no other tiled window, `shared` beside one (the tile is
 // smaller there, and Hyprland shrinks a bigger pseudo size to it, so one
 // context's size says nothing about the other's). A new window of that app
@@ -575,15 +575,29 @@ function pseudoContext(client, clients) {
 
 // Follows the tracked windows in `clients`. A pseudotiled one keeps its
 // size per context while tiled (floating or fullscreen it is not its pseudo
-// size). One gone from `clients` closed: its app keeps the size of every
-// context it was seen in, or loses the size of the context it was last in
-// when the window was no longer pseudotiled. Returns { tracked, sizes, changed }.
+// size), and its app gets that size as soon as it changes, so the app's next
+// window opens at it even while this one stays open. One gone from `clients`
+// closed: its app keeps the size of every context it was seen in, or loses
+// the size of the context it was last in when the window was no longer
+// pseudotiled. Returns { tracked, sizes, changed }.
 function pseudoTrack(tracked, sizes, clients) {
   var nextTracked = {}
   var nextSizes = JSON.parse(JSON.stringify(sizes))
   var changed = false
   var byAddr = {}
   ;(clients || []).forEach(function(c) { byAddr[windowAddress(c.address)] = c })
+  // Sets (size) or drops (null) the app's size for `ctx`
+  function keep(t, ctx, size) {
+    var before = JSON.stringify(nextSizes[t.class] || null)
+    var entry = nextSizes[t.class] || {}
+    if (size) entry[ctx] = [Math.round(size[0]), Math.round(size[1])].concat(t.title ? [t.title] : [])
+    else delete entry[ctx]
+    var ordered = {}
+    PSEUDO_CONTEXTS.forEach(function(k) { if (entry[k]) ordered[k] = entry[k] })
+    if (Object.keys(ordered).length) nextSizes[t.class] = ordered
+    else delete nextSizes[t.class]
+    if (JSON.stringify(nextSizes[t.class] || null) !== before) changed = true
+  }
   Object.keys(tracked).forEach(function(addr) {
     var t = JSON.parse(JSON.stringify(tracked[addr]))
     var c = byAddr[addr]
@@ -592,28 +606,55 @@ function pseudoTrack(tracked, sizes, clients) {
       if (c.initialTitle && !t.title) t.title = c.initialTitle
       if (!c.floating && !c.fullscreen) {
         t.last = pseudoContext(c, clients)
-        if (t.pseudo && c.size && c.size[0] > 0 && c.size[1] > 0) t.sizes[t.last] = [c.size[0], c.size[1]]
+        if (t.pseudo && c.size && c.size[0] > 0 && c.size[1] > 0) {
+          var size = [c.size[0], c.size[1]]
+          var was = t.sizes[t.last]
+          t.sizes[t.last] = size
+          if (t.class && JSON.stringify(was || null) !== JSON.stringify(size)) keep(t, t.last, size)
+        }
       }
       nextTracked[addr] = t
       return
     }
     if (!t.class) return
-    var before = JSON.stringify(nextSizes[t.class] || null)
-    var entry = nextSizes[t.class] || {}
-    if (t.pseudo) {
-      Object.keys(t.sizes).forEach(function(ctx) {
-        entry[ctx] = [Math.round(t.sizes[ctx][0]), Math.round(t.sizes[ctx][1])].concat(t.title ? [t.title] : [])
-      })
-    } else if (t.last) {
-      delete entry[t.last]
-    }
-    var ordered = {}
-    PSEUDO_CONTEXTS.forEach(function(ctx) { if (entry[ctx]) ordered[ctx] = entry[ctx] })
-    if (Object.keys(ordered).length) nextSizes[t.class] = ordered
-    else delete nextSizes[t.class]
-    if (JSON.stringify(nextSizes[t.class] || null) !== before) changed = true
+    if (t.pseudo) Object.keys(t.sizes).forEach(function(ctx) { keep(t, ctx, t.sizes[ctx]) })
+    else if (t.last) keep(t, t.last, null)
   })
   return { tracked: nextTracked, sizes: nextSizes, changed: changed }
+}
+
+// The windows followed, kept across a shell restart with the Hyprland
+// instance their addresses belong to.
+function serializePseudoTracked(tracked, instance) {
+  return JSON.stringify({ instance: instance || "", windows: tracked }, null, 2) + "\n"
+}
+
+// The tracked windows file, `{ addr: { pseudo, class, sizes, last, title? } }`,
+// keeping only windows of this Hyprland `instance` still open in `clients`
+// with the same class; {} for anything malformed.
+function parsePseudoTracked(text, instance, clients) {
+  var out = {}
+  var raw
+  try { raw = JSON.parse(text) } catch (e) { return out }
+  if (!raw || typeof raw !== "object" || raw.instance !== (instance || "")) return out
+  var windows = raw.windows
+  if (!windows || typeof windows !== "object" || Array.isArray(windows)) return out
+  var open = {}
+  ;(clients || []).forEach(function(c) { open[windowAddress(c.address)] = c.class })
+  Object.keys(windows).forEach(function(key) {
+    var addr = windowAddress(key)
+    var w = windows[key]
+    if (!addr || !w || typeof w !== "object" || typeof w.pseudo !== "boolean" || typeof w.class !== "string") return
+    if (w.class === "" || open[addr] !== w.class) return
+    var t = { pseudo: w.pseudo, class: w.class, sizes: {}, last: PSEUDO_CONTEXTS.indexOf(w.last) !== -1 ? w.last : "" }
+    PSEUDO_CONTEXTS.forEach(function(ctx) {
+      var s = pseudoSize((w.sizes || {})[ctx])
+      if (s) t.sizes[ctx] = s.slice(0, 2)
+    })
+    if (typeof w.title === "string" && w.title !== "") t.title = w.title
+    out[addr] = t
+  })
+  return out
 }
 
 // The size a new window should open at, pseudotiled: [w, h], or null when
@@ -804,6 +845,7 @@ if (typeof module !== "undefined" && module.exports) {
     relativeTime: relativeTime, fill: fill, appCount: appCount, restoreProblem: restoreProblem, restoreSummary: restoreSummary,
     shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay,
     windowAddress: windowAddress, parsePseudoSizes: parsePseudoSizes, serializePseudoSizes: serializePseudoSizes,
+    parsePseudoTracked: parsePseudoTracked, serializePseudoTracked: serializePseudoTracked,
     pseudoFlipped: pseudoFlipped, pseudoOpened: pseudoOpened, anyPseudo: anyPseudo, pseudoTrack: pseudoTrack,
     pseudoOpenSize: pseudoOpenSize, aloneOnWorkspace: aloneOnWorkspace, pseudoContext: pseudoContext, openWindowEvent: openWindowEvent,
     PSEUDO_RULES_OFF_LUA: PSEUDO_RULES_OFF_LUA, pseudoRulesLua: pseudoRulesLua, pseudoRuleMatches: pseudoRuleMatches, pseudoRuleOpened: pseudoRuleOpened,

@@ -448,26 +448,58 @@ test("a window's context: alone with no other tiled, shown window on its workspa
   assert.equal(M.pseudoContext(own, [own, client("0x2", "chrome", 945, 1028)]), "shared")
 })
 
-test("a pseudotiled window follows its size in each context and leaves both to its app when it closes", () => {
+test("a pseudotiled window leaves its size to its app in each context as soon as it changes", () => {
   let r = M.pseudoTrack(M.pseudoFlipped({}, "0x1"), {}, [client("0x1", "foot", 900, 700, { initialTitle: "foot" })])
   assert.deepEqual(r.tracked["0x1"], { pseudo: true, class: "foot", sizes: { alone: [900, 700] }, last: "alone", title: "foot" })
+  assert.deepEqual(r.sizes, { foot: { alone: [900, 700, "foot"] } })
+  assert.equal(r.changed, true)
+  // The same size again writes nothing
+  r = M.pseudoTrack(r.tracked, r.sizes, [client("0x1", "foot", 900, 700)])
   assert.equal(r.changed, false)
-  r = M.pseudoTrack(r.tracked, {}, [client("0x1", "foot", 600, 500), client("0x2", "chrome", 945, 1028)])
-  assert.deepEqual(r.tracked["0x1"].sizes, { alone: [900, 700], shared: [600, 500] })
+  r = M.pseudoTrack(r.tracked, r.sizes, [client("0x1", "foot", 1414, 890)])
+  assert.deepEqual(r.sizes, { foot: { alone: [1414, 890, "foot"] } })
+  assert.equal(r.changed, true)
+  r = M.pseudoTrack(r.tracked, r.sizes, [client("0x1", "foot", 600, 500), client("0x2", "chrome", 945, 1028)])
+  assert.deepEqual(r.tracked["0x1"].sizes, { alone: [1414, 890], shared: [600, 500] })
   assert.equal(r.tracked["0x1"].last, "shared")
+  assert.deepEqual(r.sizes, { foot: { alone: [1414, 890, "foot"], shared: [600, 500, "foot"] } })
+  assert.equal(r.changed, true)
   // Floating or fullscreen, the size on screen is not its pseudo size
-  r = M.pseudoTrack(r.tracked, {}, [client("0x1", "foot", 1900, 1000, { fullscreen: 1 })])
-  r = M.pseudoTrack(r.tracked, {}, [client("0x1", "foot", 400, 300, { floating: true })])
-  assert.deepEqual(r.tracked["0x1"].sizes, { alone: [900, 700], shared: [600, 500] })
+  r = M.pseudoTrack(r.tracked, r.sizes, [client("0x1", "foot", 1900, 1000, { fullscreen: 1 })])
+  assert.equal(r.changed, false)
+  r = M.pseudoTrack(r.tracked, r.sizes, [client("0x1", "foot", 400, 300, { floating: true })])
+  assert.equal(r.changed, false)
+  assert.deepEqual(r.tracked["0x1"].sizes, { alone: [1414, 890], shared: [600, 500] })
   r = M.pseudoTrack(r.tracked, { kitty: { alone: [1, 1] } }, [])
-  assert.deepEqual(r, { tracked: {}, sizes: { kitty: { alone: [1, 1] }, foot: { alone: [900, 700, "foot"], shared: [600, 500, "foot"] } }, changed: true })
+  assert.deepEqual(r, { tracked: {}, sizes: { kitty: { alone: [1, 1] }, foot: { alone: [1414, 890, "foot"], shared: [600, 500, "foot"] } }, changed: true })
+})
+
+test("a stale size is replaced by the open window's as soon as it is seen resized", () => {
+  // Opened alone at the stored size, then resized: the next window gets the new one
+  let r = M.pseudoTrack(M.pseudoOpened({}, "0x1", "strata", "alone", [945, 1028], "Strata"), { strata: { alone: [945, 1028, "Strata"] } },
+    [client("0x1", "strata", 945, 1028)])
+  assert.equal(r.changed, false)
+  r = M.pseudoTrack(r.tracked, r.sizes, [client("0x1", "strata", 1414, 890)])
+  assert.deepEqual(r.sizes, { strata: { alone: [1414, 890, "Strata"] } })
+  assert.equal(r.changed, true)
+})
+
+test("a tracked window that is not pseudotiled never writes a size", () => {
+  let t = M.pseudoFlipped(M.pseudoFlipped({}, "0x1"), "0x1")
+  let r = M.pseudoTrack(t, { foot: { alone: [800, 600] } }, [client("0x1", "foot", 1200, 900)])
+  assert.deepEqual(r.sizes, { foot: { alone: [800, 600] } })
+  assert.equal(r.changed, false)
+  r = M.pseudoTrack(r.tracked, r.sizes, [client("0x1", "foot", 1000, 700)])
+  assert.equal(r.changed, false)
 })
 
 test("closing pseudotiled keeps the app's size for a context the window was never seen in", () => {
   let r = M.pseudoTrack(M.pseudoFlipped({}, "0x1"), { foot: { alone: [800, 600] } }, [client("0x1", "foot", 600, 500), client("0x2", "chrome", 945, 1028)])
+  assert.deepEqual(r.sizes, { foot: { alone: [800, 600], shared: [600, 500] } })
   r = M.pseudoTrack(r.tracked, r.sizes, [])
   assert.deepEqual(r.sizes, { foot: { alone: [800, 600], shared: [600, 500] } })
-  assert.equal(r.changed, true)
+  // Already kept while it was open: closing changes nothing
+  assert.equal(r.changed, false)
 })
 
 test("a window closed no longer pseudotiled makes its app forget the size of its last context only", () => {
@@ -475,6 +507,7 @@ test("a window closed no longer pseudotiled makes its app forget the size of its
   const sizes = { foot: { alone: [800, 600], shared: [700, 500] } }
   let r = M.pseudoTrack(t, sizes, [client("0x1", "foot", 945, 1028), client("0x2", "chrome", 945, 1028)])
   assert.equal(r.tracked["0x1"].pseudo, false)
+  assert.equal(r.changed, false)
   r = M.pseudoTrack(r.tracked, r.sizes, [])
   assert.deepEqual(r.sizes, { foot: { alone: [800, 600] } })
   assert.equal(r.changed, true)
@@ -491,6 +524,35 @@ test("closing with the same size or an untracked window changes nothing", () => 
   // Flipped and closed before any poll saw its class: nothing to remember
   const u = M.pseudoTrack(M.pseudoFlipped({}, "0x5"), { foot: { alone: [800, 600] } }, [])
   assert.deepEqual(u, { tracked: {}, sizes: { foot: { alone: [800, 600] } }, changed: false })
+})
+
+test("the followed windows survive a shell restart: same Hyprland, still open, same class", () => {
+  const tracked = {
+    "0x1": { pseudo: true, class: "strata", sizes: { alone: [1414, 890] }, last: "alone", title: "Strata" },
+    "0x2": { pseudo: false, class: "foot", sizes: {}, last: "shared" },
+    "0x3": { pseudo: true, class: "kitty", sizes: { shared: [700, 500] }, last: "shared" },
+    "0x4": { pseudo: true, class: "chrome", sizes: {}, last: "" }
+  }
+  const text = M.serializePseudoTracked(tracked, "abc")
+  assert.deepEqual(JSON.parse(text), { instance: "abc", windows: tracked })
+  // 0x3 closed while the shell was down, 0x4 is now another app's window
+  const clients = [client("0x1", "strata", 1414, 890), client("0x2", "foot", 600, 500), client("0x4", "nautilus", 800, 600)]
+  assert.deepEqual(M.parsePseudoTracked(text, "abc", clients), { "0x1": tracked["0x1"], "0x2": tracked["0x2"] })
+  // Another Hyprland: its addresses mean nothing here
+  assert.deepEqual(M.parsePseudoTracked(text, "other", clients), {})
+})
+
+test("a malformed tracked windows file is nothing to follow", () => {
+  const clients = [client("0x1", "foot", 800, 600)]
+  assert.deepEqual(M.parsePseudoTracked("not json", "abc", clients), {})
+  assert.deepEqual(M.parsePseudoTracked("[]", "abc", clients), {})
+  assert.deepEqual(M.parsePseudoTracked(JSON.stringify({ instance: "abc", windows: [] }), "abc", clients), {})
+  assert.deepEqual(M.parsePseudoTracked(JSON.stringify({ instance: "abc", windows: {
+    "0x1": { pseudo: "yes", class: "foot", sizes: {}, last: "" }
+  } }), "abc", clients), {})
+  assert.deepEqual(M.parsePseudoTracked(JSON.stringify({ instance: "abc", windows: {
+    "1": { pseudo: true, class: "foot", sizes: { alone: [0, 5], shared: [700, 500], other: [1, 1] }, last: "nowhere", title: 3 }
+  } }), "abc", clients), { "0x1": { pseudo: true, class: "foot", sizes: { shared: [700, 500] }, last: "" } })
 })
 
 test("a remembered size keeps the initial title of the window it came from", () => {
