@@ -171,6 +171,19 @@ test("placement pairs the nth saved window with the opened address", () => {
   assert.equal(M.placement(entry, "0xb", 1), null)
 })
 
+test("entry: a window pseudotiled with Super + P is saved as such, and placed back pseudotiled", () => {
+  const w = [win("0x1", 10, "x", 1, 237, 98, 1446, 910), win("0x2", 10, "x", 2, 0, 0, 100, 100)]
+  const e = M.buildEntry({ class: "x", windows: w, cmdline: "x\0", pseudo: ["0x1"] })
+  assert.deepEqual(e.geometry, [{ at: [237, 98], size: [1446, 910], floating: false, pseudo: true }, { at: [0, 0], size: [100, 100], floating: false }])
+  assert.deepEqual(M.placement(e, "0xa", 0), { addr: "0xa", ws: "1", x: 237, y: 98, w: 1446, h: 910, floating: false, pseudo: true })
+  assert.deepEqual(M.buildEntry({ class: "x", windows: w, cmdline: "x\0" }).geometry[0], { at: [237, 98], size: [1446, 910], floating: false })
+})
+
+test("pseudotiled at save: only tracked windows still pseudotiled", () => {
+  const tracked = { "0x1": { pseudo: true, class: "x", sizes: {}, last: "" }, "0x2": { pseudo: false, class: "x", sizes: {}, last: "" } }
+  assert.deepEqual(M.pseudoAddresses(tracked), ["0x1"])
+})
+
 test("layout plan: side by side, then the right half stacked", () => {
   const plan = M.layoutPlan([rect("a", 0, 0, 500, 1000), rect("b", 500, 0, 500, 500), rect("c", 500, 500, 500, 500)])
   assert.deepEqual(plan, { first: "a", splits: [{ base: "a", dir: "r", add: "b" }, { base: "b", dir: "d", add: "c" }] })
@@ -210,6 +223,8 @@ test("off windows report anything past the tolerance, or missing", () => {
   assert.match(off[0], /^b want 520,0 480x500 got 500,0 500x500$/)
   assert.match(off[1], /^c want .* got gone$/)
   assert.deepEqual(M.offWindows(clients, [rect("a", 8, 8, 505, 495)]), [])
+  // a pseudotiled window sits inside its tile, not on it: not checked
+  assert.deepEqual(M.offWindows(clients, [Object.assign(rect("b", 600, 50, 300, 300), { pseudo: true })]), [])
 })
 
 test("shutdown detection: uwsm stop, systemd stopping, or a queued poweroff/reboot timer", () => {

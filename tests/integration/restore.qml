@@ -67,9 +67,18 @@ ShellRoot {
       } },
     { name: "a floating window gets its exact size and position",
       until: function() { return harness.called("float({ action = \"enable\"") && harness.called("resize({ x = 300, y = 200") && harness.called("move({ x = 50, y = 60") } },
+    { name: "a window saved pseudotiled comes back pseudotiled at its saved size, and is followed",
+      until: function() {
+        var addr = (harness.clients().filter(function(c) { return c.class === "p" })[0] || {}).address
+        var on = harness.callsText.indexOf("pseudo({ action = \"enable\", window = \"address:" + addr + "\" })")
+        var size = harness.callsText.indexOf("resize({ x = 1446, y = 910, window = \"address:" + addr + "\" })")
+        return !!addr && on !== -1 && on < size && !harness.called("resize({ x = 100, y = 100, window = \"address:" + addr)
+          && harness.logText.indexOf("pseudo: restored p " + addr + " alone at 1446x910") !== -1
+          && addr in harness.service.pseudoTracked && harness.service.pseudoTracked[addr].pseudo === true
+      } },
     { name: "keeps a copy of what was restored and reports it",
       until: function() {
-        return JSON.parse(harness.restoredText || "[]").length === 3 && harness.service.lastRestoreText === "everything in place"
+        return JSON.parse(harness.restoredText || "[]").length === 4 && harness.service.lastRestoreText === "everything in place"
           && harness.service.restoring === false && harness.service.watching === true
       } },
     { name: "restoring again over the open apps launches nothing",
@@ -81,7 +90,7 @@ ShellRoot {
     { name: "the saved session and the restored copy are readable only by the user",
       until: function() { return harness.modeText === "600 600" } },
     { name: "logs the restore",
-      until: function() { return harness.logText.indexOf("restore: a 1/1 windows -> 3") !== -1 && harness.logText.indexOf("restore: 2 apps") !== -1 } }
+      until: function() { return harness.logText.indexOf("restore: a 1/1 windows -> 3") !== -1 && harness.logText.indexOf("restore: 3 apps") !== -1 } }
   ]
 
 
@@ -93,7 +102,8 @@ ShellRoot {
       JSON.stringify([
         { cmd: ["fakeapp-a"], class: "a", workspaces: ["3"], geometry: [{ at: [0, 0], size: [100, 100], floating: false }] },
         { cmd: ["fakeapp-c"], class: "c", workspaces: ["4"], geometry: [{ at: [0, 0], size: [100, 100], floating: false }] },
-        { cmd: ["fakeapp-f", "--x"], class: "f", workspaces: ["5"], geometry: [{ at: [50, 60], size: [300, 200], floating: true }] }
+        { cmd: ["fakeapp-f", "--x"], class: "f", workspaces: ["5"], geometry: [{ at: [50, 60], size: [300, 200], floating: true }] },
+        { cmd: ["fakeapp-p"], class: "p", workspaces: ["6"], geometry: [{ at: [237, 98], size: [1446, 910], floating: false, pseudo: true }] }
       ]),
       JSON.stringify({ ignored: ["c"] }),
       harness.home + "/.local/state/hypr-session.json", harness.settingsPath]

@@ -214,11 +214,17 @@ function windowsOf(clients, pid, cls) {
 
 // Builds the entry for one target. `o`: { class, windows, cmdline (raw),
 // webUrl, cwd (terminal), program ({cwd, command}|null), env (object), shell,
-// flatpak (flatpakInfo|null), appImage (path|"") }
+// flatpak (flatpakInfo|null), appImage (path|""), pseudo ([addr] pseudotiled
+// with Super + P) }
 function buildEntry(o) {
   var cls = o.class
+  var pseudo = o.pseudo || []
   var workspaces = o.windows.map(function(w) { return w.workspace.name })
-  var geometry = o.windows.map(function(w) { return { at: w.at, size: w.size, floating: w.floating } })
+  var geometry = o.windows.map(function(w) {
+    var g = { at: w.at, size: w.size, floating: w.floating }
+    if (!w.floating && pseudo.indexOf(windowAddress(w.address)) !== -1) g.pseudo = true
+    return g
+  })
 
   if (isWebAppClass(cls)) {
     return { cmd: ["omarchy-launch-webapp", o.webUrl], class: cls, workspaces: workspaces, geometry: geometry }
@@ -354,7 +360,9 @@ function launchLua(entry, workspace) {
 function placement(entry, addr, n) {
   var g = entry.geometry && entry.geometry[n]
   if (!g) return null
-  return { addr: addr, ws: entry.workspaces[n], x: g.at[0], y: g.at[1], w: g.size[0], h: g.size[1], floating: g.floating }
+  var spot = { addr: addr, ws: entry.workspaces[n], x: g.at[0], y: g.at[1], w: g.size[0], h: g.size[1], floating: g.floating }
+  if (g.pseudo === true && !g.floating) spot.pseudo = true
+  return spot
 }
 
 // ---- Layout -----------------------------------------------------------------
@@ -449,6 +457,8 @@ function aimPlan(clients, addr, ws, axis, px, py) {
 function offWindows(clients, wins) {
   var off = []
   wins.forEach(function(s) {
+    // A pseudotiled window sits inside its tile: its rectangle is not the tile's
+    if (s.pseudo) return
     var c = clients.filter(function(x) { return x.address === s.addr })[0]
     var delta = c ? Math.max(Math.abs(c.at[0] - s.x), Math.abs(c.at[1] - s.y), Math.abs(c.size[0] - s.w), Math.abs(c.size[1] - s.h)) : Infinity
     if (delta > OFF_TOLERANCE) {
@@ -551,6 +561,11 @@ function pseudoOpened(tracked, addr, cls, ctx, size, title) {
   next[addr] = { pseudo: true, class: cls, sizes: sizes, last: ctx }
   if (title) next[addr].title = title
   return next
+}
+
+// The tracked windows pseudotiled right now, saved with the session.
+function pseudoAddresses(tracked) {
+  return Object.keys(tracked).filter(function(a) { return tracked[a].pseudo })
 }
 
 function anyPseudo(tracked) {
@@ -846,7 +861,7 @@ if (typeof module !== "undefined" && module.exports) {
     shuttingDown: shuttingDown, logLine: logLine, eventDelay: eventDelay,
     windowAddress: windowAddress, parsePseudoSizes: parsePseudoSizes, serializePseudoSizes: serializePseudoSizes,
     parsePseudoTracked: parsePseudoTracked, serializePseudoTracked: serializePseudoTracked,
-    pseudoFlipped: pseudoFlipped, pseudoOpened: pseudoOpened, anyPseudo: anyPseudo, pseudoTrack: pseudoTrack,
+    pseudoFlipped: pseudoFlipped, pseudoOpened: pseudoOpened, pseudoAddresses: pseudoAddresses, anyPseudo: anyPseudo, pseudoTrack: pseudoTrack,
     pseudoOpenSize: pseudoOpenSize, aloneOnWorkspace: aloneOnWorkspace, pseudoContext: pseudoContext, openWindowEvent: openWindowEvent,
     PSEUDO_RULES_OFF_LUA: PSEUDO_RULES_OFF_LUA, pseudoRulesLua: pseudoRulesLua, pseudoRuleMatches: pseudoRuleMatches, pseudoRuleOpened: pseudoRuleOpened,
     pressureTotals: pressureTotals, pressureLoad: pressureLoad, calm: calm

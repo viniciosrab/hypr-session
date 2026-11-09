@@ -381,7 +381,8 @@ Item {
         env: terminal || web ? {} : Model.envDiff(sessionEnv, environ),
         shell: Quickshell.env("SHELL") || "zsh",
         flatpak: terminal || web ? null : flatpakOf(t.pid),
-        appImage: Model.appImagePath(environ, cmdline)
+        appImage: Model.appImagePath(environ, cmdline),
+        pseudo: Model.pseudoAddresses(root.pseudoTracked)
       })
     })
   }
@@ -568,6 +569,7 @@ Item {
         return settings.rearrangeLayout ? arrange(r.placements) : []
       }).then(function(off) {
         root.lastRestore = { placed: r.placements.length, expected: r.expected, off: off.length, layout: settings.rearrangeLayout }
+        return pseudoRestore(r.placements)
       }).then(rulesOff, function(e) {
         return rulesOff().then(function() { throw e })
       }).then(function() { root.lastRestoreAt = Date.now() })
@@ -653,9 +655,11 @@ Item {
     }).then(function() {
       return hypr(["eval", "hl.config({ dwindle = { split_width_multiplier = " + st.multiplier + ", force_split = " + st.force + " } })"])
     }).then(function() {
-      // Two passes: each resize moves the splits the next window hangs off
+      // Two passes: each resize moves the splits the next window hangs off.
+      // A pseudotiled window's rectangle is not its tile's: it gets its size
+      // back afterwards (pseudoRestore)
       return each([0, 1], function() {
-        return each(wins, function(w) {
+        return each(wins.filter(function(w) { return !w.pseudo }), function(w) {
           return dispatch("hl.dsp.window.resize({ x = " + w.w + ", y = " + w.h + ", window = \"address:" + w.addr + "\" })")
         })
       })
@@ -753,6 +757,27 @@ Item {
     if (!addr) return
     pseudoTracked = Model.pseudoFlipped(pseudoTracked, addr)
     trackPseudo()
+    saveSoon()
+  }
+
+  // A restored window that was pseudotiled with Super + P when saved: pseudotile
+  // it again at its saved size, and follow it like one flipped by hand
+  function pseudoRestore(placements) {
+    if (!settings.rememberPseudoSize) return Promise.resolve()
+    return each(placements.filter(function(p) { return p.pseudo }), function(p) {
+      var addr = Model.windowAddress(p.addr)
+      return dispatch("hl.dsp.window.pseudo({ action = \"enable\", window = \"address:" + addr + "\" })").then(function() {
+        return dispatch("hl.dsp.window.resize({ x = " + p.w + ", y = " + p.h + ", window = \"address:" + addr + "\" })")
+      }).then(function() {
+        return hyprJson(["clients", "-j"])
+      }).then(function(clients) {
+        var client = (clients || []).filter(function(c) { return Model.windowAddress(c.address) === addr })[0]
+        if (!client) return
+        var ctx = Model.pseudoContext(client, clients)
+        root.pseudoTracked = Model.pseudoOpened(root.pseudoTracked, addr, client.class, ctx, [p.w, p.h], client.initialTitle)
+        log("pseudo: restored " + client.class + " " + addr + " " + ctx + " at " + p.w + "x" + p.h)
+      })
+    })
   }
 
   function trackPseudoOnce() {
@@ -772,6 +797,7 @@ Item {
       root.pseudoTracked = r.tracked
       root.pseudoSizes = r.sizes
       if (!r.changed) return null
+      saveSoon()
       Object.keys(before).concat(Object.keys(r.sizes)).forEach(function(cls, i, all) {
         if (all.indexOf(cls) !== i) return
         ;["alone", "shared"].forEach(function(ctx) {
@@ -935,6 +961,14 @@ Item {
       })
     }
     debounce.interval = delay * 1000
+    debounce.restart()
+  }
+
+  // Super + P changes no window event: save its window's size anyway, so a
+  // reboot brings it back pseudotiled
+  function saveSoon() {
+    if (!watching || !settings.autoSave || ending) return
+    debounce.interval = 1000
     debounce.restart()
   }
 

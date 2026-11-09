@@ -71,6 +71,12 @@ ShellRoot {
     { name: "it drops out of the session once its process exits",
       run: function() { tray.running = false },
       until: function() { return harness.has("fakeapp") && !harness.has("trayapp") } },
+    { name: "Super + P on a window saves it as pseudotiled right away",
+      run: function() { harness.service.pseudoToggled("0x1") },
+      until: function() {
+        var s = harness.state()
+        return !!s && s.length === 1 && s[0].geometry[0].pseudo === true && s[0].geometry[0].size[0] === 800
+      } },
     { name: "an ignored app is left out and the choice persists",
       run: function() { harness.service.setIgnored("skipme", true); harness.service.setSetting("autoSave", false) },
       until: function() {

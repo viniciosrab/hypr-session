@@ -37,7 +37,9 @@ Open **Saved apps** and switch off the apps that should not be saved or reopened
 
 ## Remember the Super + P size
 
-Pseudotile a window with Super + P and resize it: its app remembers that size as soon as you resize it, not only when the window closes, and the app's next tiled window opens pseudotiled at it, on any workspace, even while the first one is still open. Floating windows and windows reopened by a restore are left alone.
+Pseudotile a window with Super + P and resize it: its app remembers that size as soon as you resize it, not only when the window closes, and the app's next tiled window opens pseudotiled at it, on any workspace, even while the first one is still open. Floating windows are left alone.
+
+After a reboot, a window that was pseudotiled when the session was saved comes back pseudotiled at the size it had, and keeps updating its app's size like before. The session is saved as soon as Super + P flips a window or its size changes, not only when a window opens or closes.
 
 Each app keeps two sizes, kept across restarts: one for when it is alone on its workspace and one for when it sits beside another tiled window. Sized alone, it comes back at that size when it opens alone; sized beside another window, it comes back at that size when it opens beside one. With no size for where it opens, it tiles as usual. Closing the app's window after turning pseudotile off forgets the size for where it was. The windows being followed survive a shell restart (`omarchy-restart-shell`), so a window pseudotiled before it keeps updating its app's size after it.
 
