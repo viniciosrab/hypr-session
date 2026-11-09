@@ -28,7 +28,7 @@ case $1 in
       *window.move*workspace*)
         ws=$(printf '%s' "$2" | sed -n 's/.*workspace = "\([^"]*\)".*/\1/p')
         addr=$(printf '%s' "$2" | sed -n 's/.*address:\([0-9a-fx]*\).*/\1/p')
-        jq --arg w "$ws" --arg a "$addr" 'map(if .address == $a then .workspace = {id: 1, name: $w} else . end)' \
+        jq --arg w "$ws" --arg a "$addr" 'map(if .address == $a then .workspace = {id: ($w | tonumber? // -98), name: $w} else . end)' \
           "$f/clients.json" >"$f/clients.tmp" && mv "$f/clients.tmp" "$f/clients.json" ;;
     esac ;;
 esac
